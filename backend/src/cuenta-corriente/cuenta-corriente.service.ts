@@ -135,7 +135,9 @@ export class CuentaCorrienteService {
       .maybeSingle();
 
     if (lookupError) {
-      throw new BadRequestException('Error al buscar el usuario');
+      throw new BadRequestException(
+        `Error al buscar el usuario: ${lookupError.message}`,
+      );
     }
 
     if (!target) {
