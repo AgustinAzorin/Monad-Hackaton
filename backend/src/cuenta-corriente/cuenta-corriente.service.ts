@@ -123,11 +123,15 @@ export class CuentaCorrienteService {
 
     const isEmail = query.includes('@');
     const column = isEmail ? 'email' : 'dni';
+    // El email se guarda siempre en minúsculas (Supabase Auth lo normaliza),
+    // por lo que la búsqueda debe ser case-insensitive para no fallar por
+    // diferencias de mayúsculas. El DNI se compara tal cual (ya viene trim).
+    const value = isEmail ? query.toLowerCase() : query;
 
     const { data: target, error: lookupError } = await supabase
       .from('profiles')
       .select('id, email, dni, nombre')
-      .eq(column, query)
+      .eq(column, value)
       .maybeSingle();
 
     if (lookupError) {
