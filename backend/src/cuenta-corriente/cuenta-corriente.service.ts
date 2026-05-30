@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   BadRequestException,
   NotFoundException,
   ForbiddenException,
@@ -15,29 +16,43 @@ import {
   MensajeChat,
   ClavePublica,
   FacturaEscaneada,
+  AccionOnchain,
+  OnchainResumen,
+  TipoAccion,
 } from './cuenta-corriente.entity';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
+import { keccak256, stringToHex } from 'viem';
 import { CreateCuentaCorrienteDto } from './dto/create-cuenta-corriente.dto';
 import {
   CreateTransaccionDto,
   ProcesarPagoMPDto,
   CreateMensajeDto,
   UpsertClavePublicaDto,
+  IniciarAccionDto,
+  FirmarAccionDto,
 } from './dto/create-transaccion.dto';
+import {
+  BlockchainService,
+  TipoOnchain,
+} from '../blockchain/blockchain.service';
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse');
 
 const FACTURAS_BUCKET = 'facturas';
 const FACTURA_URL_TTL_SECONDS = 60 * 60; // 1 hora
+const ZERO_BYTES32 = `0x${'0'.repeat(64)}` as const;
+const ACTION_TTL_SECONDS = 24 * 60 * 60; // 24h
 
 @Injectable()
 export class CuentaCorrienteService {
+  private readonly logger = new Logger(CuentaCorrienteService.name);
   private mpClient: InstanceType<typeof MercadoPagoConfig> | null = null;
 
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
+    private readonly blockchain: BlockchainService,
   ) {
     const mpToken = this.configService.get<string>('MERCADO_PAGO_ACCESS_TOKEN');
     if (mpToken) {
@@ -52,7 +67,7 @@ export class CuentaCorrienteService {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, dni, nombre')
+      .select('id, email, dni, nombre, wallet_address')
       .in('id', uniqueIds);
 
     if (error) {
@@ -280,6 +295,7 @@ export class CuentaCorrienteService {
         descripcion: dto.descripcion ?? null,
         categoria_slug: dto.categoria_slug ?? null,
         metodo_pago_slug: dto.metodo_pago_slug ?? null,
+        factura_hash: dto.factura_hash ?? null,
       })
       .select()
       .single();
@@ -295,13 +311,89 @@ export class CuentaCorrienteService {
       data.estado = 'COMPLETADO';
     }
 
+    // #1 + #4: anclaje on-chain fire-and-forget — nunca debe romper la creación.
+    void this.anclarEnCadena(data as Transaccion).catch((err) =>
+      this.logger.warn(
+        `Anclaje on-chain falló tx=${data.id}: ${err?.message ?? err}`,
+      ),
+    );
+
     return data as Transaccion;
+  }
+
+  /**
+   * Ancla una transacción recién creada en Monad (#1) junto al hash de su factura (#4).
+   * Resuelve wallets de ambas partes; si falta alguna o blockchain está desactivado,
+   * marca estado_onchain en consecuencia y NO falla.
+   */
+  private async anclarEnCadena(tx: Transaccion): Promise<void> {
+    const supabase = this.supabaseService.getClient();
+
+    if (!this.blockchain.isEnabled()) {
+      return; // queda NO_ANCLADA (default)
+    }
+
+    const profiles = await this.getProfiles([tx.emisor_id, tx.receptor_id]);
+    const emisorWallet = profiles.get(tx.emisor_id)?.wallet_address ?? null;
+    const receptorWallet = profiles.get(tx.receptor_id)?.wallet_address ?? null;
+
+    if (!emisorWallet || !receptorWallet) {
+      await supabase
+        .from('transacciones')
+        .update({ estado_onchain: 'SIN_WALLET' })
+        .eq('id', tx.id);
+      return;
+    }
+
+    const montoCentavos = BigInt(Math.round(Number(tx.monto) * 100));
+    const payload = JSON.stringify({
+      id: tx.id,
+      monto_centavos: montoCentavos.toString(),
+      tipo: tx.tipo,
+      emisor_id: tx.emisor_id,
+      receptor_id: tx.receptor_id,
+      created_at: tx.created_at,
+    });
+    const payloadHash = keccak256(stringToHex(payload));
+    const facturaHash = tx.factura_hash
+      ? (`0x${tx.factura_hash.replace(/^0x/, '')}` as `0x${string}`)
+      : ZERO_BYTES32;
+
+    try {
+      const hash = await this.blockchain.anchorTransaction({
+        txId: tx.id,
+        payloadHash,
+        facturaHash,
+        emisor: emisorWallet as `0x${string}`,
+        receptor: receptorWallet as `0x${string}`,
+        monto: montoCentavos,
+        tipo: tx.tipo === 'FACTURA' ? TipoOnchain.FACTURA : TipoOnchain.PAGO,
+      });
+      await supabase
+        .from('transacciones')
+        .update({ estado_onchain: 'REGISTRADA', anchor_tx_hash: hash })
+        .eq('id', tx.id);
+      this.logger.log(`Tx ${tx.id} anclada on-chain: ${hash}`);
+    } catch (err: any) {
+      if (String(err?.message ?? '').includes('ALREADY_ANCHORED')) {
+        await supabase
+          .from('transacciones')
+          .update({ estado_onchain: 'REGISTRADA' })
+          .eq('id', tx.id);
+        return;
+      }
+      await supabase
+        .from('transacciones')
+        .update({ estado_onchain: 'ERROR' })
+        .eq('id', tx.id);
+      throw err;
+    }
   }
 
   async listarTransacciones(
     cuentaId: string,
     usuarioId: string,
-  ): Promise<Transaccion[]> {
+  ): Promise<TransaccionConDetalle[]> {
     await this.assertUserInCuenta(cuentaId, usuarioId);
     const supabase = this.supabaseService.getClient();
 
@@ -312,7 +404,67 @@ export class CuentaCorrienteService {
       .order('created_at', { ascending: false });
 
     if (error) throw new BadRequestException(error.message);
-    return (data ?? []) as Transaccion[];
+
+    const txs = (data ?? []) as Transaccion[];
+    const onchainMap = await this.construirOnchainMap(txs, usuarioId);
+
+    return txs.map((tx) => {
+      const soyReceptor = tx.receptor_id === usuarioId;
+      return {
+        ...tx,
+        contraparte: { id: '', email: '', dni: '', nombre: null },
+        direccion: soyReceptor ? 'HACIA_MI' : 'POR_MI',
+        factura_url: null,
+        onchain: onchainMap.get(tx.id),
+      } as TransaccionConDetalle;
+    });
+  }
+
+  /**
+   * Construye el resumen on-chain (estado, wallets vinculadas, acción pendiente)
+   * para un conjunto de transacciones, desde la perspectiva de `usuarioId`.
+   */
+  private async construirOnchainMap(
+    txs: Transaccion[],
+    usuarioId: string,
+  ): Promise<Map<string, OnchainResumen>> {
+    const map = new Map<string, OnchainResumen>();
+    if (txs.length === 0) return map;
+
+    const supabase = this.supabaseService.getClient();
+    const partyIds = txs.flatMap((t) => [t.emisor_id, t.receptor_id]);
+    const profiles = await this.getProfiles(partyIds);
+
+    const txIds = txs.map((t) => t.id);
+    const { data: acciones } = await supabase
+      .from('acciones_onchain')
+      .select('*')
+      .in('transaccion_id', txIds)
+      .in('estado', ['PENDIENTE_FIRMAS', 'LISTA', 'ENVIADA']);
+
+    const accionPorTx = new Map<string, AccionOnchain>();
+    for (const a of (acciones ?? []) as AccionOnchain[]) {
+      // si hay varias, quedarse con la más reciente
+      const prev = accionPorTx.get(a.transaccion_id);
+      if (!prev || a.created_at > prev.created_at) {
+        accionPorTx.set(a.transaccion_id, a);
+      }
+    }
+
+    for (const tx of txs) {
+      const miId = usuarioId;
+      const contraparteId =
+        tx.emisor_id === miId ? tx.receptor_id : tx.emisor_id;
+      map.set(tx.id, {
+        estado_onchain: tx.estado_onchain ?? 'NO_ANCLADA',
+        anchor_tx_hash: tx.anchor_tx_hash ?? null,
+        factura_hash: tx.factura_hash ?? null,
+        mi_wallet_linked: !!profiles.get(miId)?.wallet_address,
+        contraparte_wallet_linked: !!profiles.get(contraparteId)?.wallet_address,
+        accion_pendiente: accionPorTx.get(tx.id) ?? null,
+      });
+    }
+    return map;
   }
 
   // Todas las transacciones del usuario (en todas sus cuentas corrientes),
@@ -336,6 +488,7 @@ export class CuentaCorrienteService {
       tx.emisor_id === usuarioId ? tx.receptor_id : tx.emisor_id,
     );
     const profiles = await this.getProfiles(contraparteIds);
+    const onchainMap = await this.construirOnchainMap(transacciones, usuarioId);
 
     return Promise.all(
       transacciones.map(async (tx) => {
@@ -352,6 +505,7 @@ export class CuentaCorrienteService {
           },
           direccion: soyReceptor ? 'HACIA_MI' : 'POR_MI',
           factura_url: await this.signFacturaUrl(tx.url_factura),
+          onchain: onchainMap.get(tx.id),
         } as TransaccionConDetalle;
       }),
     );
@@ -542,6 +696,10 @@ export class CuentaCorrienteService {
 
     const montoTotal = this.extraerMontoTotal(textoExtraido);
 
+    // sha256 de los bytes del PDF — prueba de integridad que se ancla on-chain (#4)
+    const facturaHash =
+      '0x' + createHash('sha256').update(file.buffer).digest('hex');
+
     // Guardamos el PDF en el bucket privado para poder verlo luego desde el historial.
     const supabase = this.supabaseService.getClient();
     const path = `${cuentaId}/${randomUUID()}.pdf`;
@@ -557,6 +715,7 @@ export class CuentaCorrienteService {
       texto_extraido: textoExtraido.substring(0, 2000),
       confianza: montoTotal ? 'alta' : 'baja',
       url_factura: uploadError ? null : path,
+      factura_hash: facturaHash,
     };
   }
 
@@ -701,5 +860,285 @@ export class CuentaCorrienteService {
 
     if (error) throw new BadRequestException(error.message);
     return (data ?? []) as ClavePublica[];
+  }
+
+  // ─── Monad: wallet + acciones co-firmadas (EIP-712) ───
+
+  async getPerfil(usuarioId: string): Promise<Profile> {
+    const profiles = await this.getProfiles([usuarioId]);
+    const p = profiles.get(usuarioId);
+    if (!p) throw new NotFoundException('Perfil no encontrado');
+    return p;
+  }
+
+  async vincularWallet(usuarioId: string, walletAddress: string): Promise<Profile> {
+    const supabase = this.supabaseService.getClient();
+    const normalized = walletAddress.toLowerCase();
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ wallet_address: normalized })
+      .eq('id', usuarioId)
+      .select('id, email, dni, nombre, wallet_address')
+      .single();
+
+    if (error) {
+      if (
+        error.code === '23505' ||
+        error.message?.includes('duplicate') ||
+        error.message?.includes('unique')
+      ) {
+        throw new BadRequestException(
+          'Esa wallet ya está vinculada a otro usuario',
+        );
+      }
+      throw new BadRequestException(error.message);
+    }
+    return data as Profile;
+  }
+
+  private async cargarTransaccionDeUsuario(
+    cuentaId: string,
+    txId: string,
+    usuarioId: string,
+  ): Promise<Transaccion> {
+    await this.assertUserInCuenta(cuentaId, usuarioId);
+    const supabase = this.supabaseService.getClient();
+    const { data, error } = await supabase
+      .from('transacciones')
+      .select('*')
+      .eq('id', txId)
+      .eq('cuenta_corriente_id', cuentaId)
+      .single();
+    if (error || !data) throw new NotFoundException('Transacción no encontrada');
+    const tx = data as Transaccion;
+    if (tx.emisor_id !== usuarioId && tx.receptor_id !== usuarioId) {
+      throw new ForbiddenException('No participás en esta transacción');
+    }
+    return tx;
+  }
+
+  /** Inicia una acción co-firmada: valida estado, guarda la primera firma y devuelve qué firmar. */
+  async iniciarAccion(
+    cuentaId: string,
+    txId: string,
+    usuarioId: string,
+    dto: IniciarAccionDto,
+  ) {
+    const tx = await this.cargarTransaccionDeUsuario(cuentaId, txId, usuarioId);
+    const tipo = dto.tipo_accion as unknown as TipoAccion;
+
+    const requeridos: Record<TipoAccion, string[]> = {
+      CONFIRMAR: ['REGISTRADA'],
+      PAGAR: ['CONFIRMADA'],
+      REEMBOLSAR: ['PAGADA', 'REEMBOLSO_SOLICITADO'],
+    };
+    const estadoActual = tx.estado_onchain ?? 'NO_ANCLADA';
+    if (!requeridos[tipo].includes(estadoActual)) {
+      throw new BadRequestException(
+        `La transacción debe estar ${requeridos[tipo].join('/')} on-chain para ${tipo} (está ${estadoActual})`,
+      );
+    }
+
+    const profiles = await this.getProfiles([tx.emisor_id, tx.receptor_id]);
+    if (!profiles.get(tx.emisor_id)?.wallet_address) {
+      throw new BadRequestException('El emisor todavía no vinculó su wallet');
+    }
+    if (!profiles.get(tx.receptor_id)?.wallet_address) {
+      throw new BadRequestException('El receptor todavía no vinculó su wallet');
+    }
+
+    const supabase = this.supabaseService.getClient();
+
+    // limpiar acción previa no finalizada (re-intento)
+    const { data: existing } = await supabase
+      .from('acciones_onchain')
+      .select('*')
+      .eq('transaccion_id', txId)
+      .eq('tipo_accion', tipo)
+      .maybeSingle();
+    if (existing) {
+      if (['LISTA', 'ENVIADA', 'CONFIRMADA'].includes(existing.estado)) {
+        throw new BadRequestException(
+          'Ya hay una acción en curso o completada para esta transacción',
+        );
+      }
+      await supabase.from('acciones_onchain').delete().eq('id', existing.id);
+    }
+
+    // nonce/deadline los genera y firma el iniciador; validamos coherencia.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const deadline = Number(dto.deadline);
+    if (
+      !Number.isFinite(deadline) ||
+      deadline <= nowSec ||
+      deadline > nowSec + 2 * ACTION_TTL_SECONDS
+    ) {
+      throw new BadRequestException('deadline fuera de rango (máx 48h)');
+    }
+    const soyEmisor = tx.emisor_id === usuarioId;
+
+    const { data: accion, error } = await supabase
+      .from('acciones_onchain')
+      .insert({
+        transaccion_id: txId,
+        tipo_accion: tipo,
+        firma_emisor: soyEmisor ? dto.firma : null,
+        firma_receptor: soyEmisor ? null : dto.firma,
+        nonce: dto.nonce,
+        deadline,
+        estado: 'PENDIENTE_FIRMAS',
+      })
+      .select()
+      .single();
+
+    if (error) throw new BadRequestException(error.message);
+
+    if (tipo === 'REEMBOLSAR') {
+      await supabase
+        .from('transacciones')
+        .update({ estado_onchain: 'REEMBOLSO_SOLICITADO' })
+        .eq('id', txId);
+    }
+
+    return { accion: accion as AccionOnchain };
+  }
+
+  /** Segunda firma: completa las dos firmas y envía la tx on-chain (backend paga gas). */
+  async firmarAccion(
+    cuentaId: string,
+    accionId: string,
+    usuarioId: string,
+    dto: FirmarAccionDto,
+  ) {
+    await this.assertUserInCuenta(cuentaId, usuarioId);
+    const supabase = this.supabaseService.getClient();
+
+    const { data: accionData, error } = await supabase
+      .from('acciones_onchain')
+      .select('*')
+      .eq('id', accionId)
+      .single();
+    if (error || !accionData) throw new NotFoundException('Acción no encontrada');
+    const accion = accionData as AccionOnchain;
+
+    const { data: txData } = await supabase
+      .from('transacciones')
+      .select('*')
+      .eq('id', accion.transaccion_id)
+      .single();
+    const tx = txData as Transaccion;
+    if (!tx || tx.cuenta_corriente_id !== cuentaId) {
+      throw new NotFoundException('Transacción no encontrada');
+    }
+    if (tx.emisor_id !== usuarioId && tx.receptor_id !== usuarioId) {
+      throw new ForbiddenException('No participás en esta transacción');
+    }
+    if (accion.estado !== 'PENDIENTE_FIRMAS') {
+      throw new BadRequestException('Esta acción ya no admite firmas');
+    }
+
+    const soyEmisor = tx.emisor_id === usuarioId;
+    if (soyEmisor && accion.firma_emisor) {
+      throw new BadRequestException('Ya firmaste esta acción');
+    }
+    if (!soyEmisor && accion.firma_receptor) {
+      throw new BadRequestException('Ya firmaste esta acción');
+    }
+
+    const firma_emisor = soyEmisor ? dto.firma : accion.firma_emisor;
+    const firma_receptor = soyEmisor ? accion.firma_receptor : dto.firma;
+
+    if (!firma_emisor || !firma_receptor) {
+      await supabase
+        .from('acciones_onchain')
+        .update({ firma_emisor, firma_receptor })
+        .eq('id', accionId);
+      const { data } = await supabase
+        .from('acciones_onchain')
+        .select('*')
+        .eq('id', accionId)
+        .single();
+      return { accion: data as AccionOnchain, enviada: false };
+    }
+
+    // ambas firmas presentes → LISTA → enviar
+    await supabase
+      .from('acciones_onchain')
+      .update({ firma_emisor, firma_receptor, estado: 'LISTA' })
+      .eq('id', accionId);
+
+    if (!this.blockchain.isEnabled()) {
+      await supabase
+        .from('acciones_onchain')
+        .update({ estado: 'FALLIDA', error_msg: 'Blockchain desactivado en el backend' })
+        .eq('id', accionId);
+      throw new BadRequestException('Blockchain no está configurado en el backend');
+    }
+
+    const params = {
+      txId: tx.id,
+      nonce: BigInt(accion.nonce),
+      deadline: BigInt(accion.deadline),
+      sigEmisor: firma_emisor as `0x${string}`,
+      sigReceptor: firma_receptor as `0x${string}`,
+    };
+
+    try {
+      let hash: `0x${string}`;
+      if (accion.tipo_accion === 'CONFIRMAR') {
+        hash = await this.blockchain.submitConfirmInvoice(params);
+      } else if (accion.tipo_accion === 'PAGAR') {
+        // Nota: NO se toca el saldo (Mercado Pago ya lo movió). Solo registro on-chain.
+        hash = await this.blockchain.submitPay(params);
+      } else {
+        hash = await this.blockchain.submitRefund(params);
+      }
+
+      const nuevoEstadoTx =
+        accion.tipo_accion === 'CONFIRMAR'
+          ? 'CONFIRMADA'
+          : accion.tipo_accion === 'PAGAR'
+            ? 'PAGADA'
+            : 'REEMBOLSADA';
+
+      await supabase
+        .from('acciones_onchain')
+        .update({ estado: 'CONFIRMADA', tx_hash: hash })
+        .eq('id', accionId);
+      await supabase
+        .from('transacciones')
+        .update({ estado_onchain: nuevoEstadoTx })
+        .eq('id', tx.id);
+
+      return { enviada: true, tx_hash: hash, estado_onchain: nuevoEstadoTx };
+    } catch (err: any) {
+      await supabase
+        .from('acciones_onchain')
+        .update({
+          estado: 'FALLIDA',
+          error_msg: String(err?.message ?? err).slice(0, 500),
+        })
+        .eq('id', accionId);
+      throw new BadRequestException(
+        `Falló el envío on-chain: ${err?.message ?? err}`,
+      );
+    }
+  }
+
+  async listarAcciones(
+    cuentaId: string,
+    txId: string,
+    usuarioId: string,
+  ): Promise<AccionOnchain[]> {
+    await this.cargarTransaccionDeUsuario(cuentaId, txId, usuarioId);
+    const supabase = this.supabaseService.getClient();
+    const { data, error } = await supabase
+      .from('acciones_onchain')
+      .select('*')
+      .eq('transaccion_id', txId)
+      .order('created_at', { ascending: false });
+    if (error) throw new BadRequestException(error.message);
+    return (data ?? []) as AccionOnchain[];
   }
 }

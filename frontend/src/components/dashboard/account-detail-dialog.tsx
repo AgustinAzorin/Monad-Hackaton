@@ -19,7 +19,15 @@ import {
   Plus,
   RotateCcw,
   DollarSign,
+  ShieldCheck,
+  ExternalLink,
+  PenLine,
+  Link2,
 } from "lucide-react"
+import { useAccount, useChainId } from "wagmi"
+import { monadTestnet } from "viem/chains"
+import { useSignLedgerAction, buildSignPayload } from "@/lib/eip712"
+import { txUrl } from "@/lib/explorer"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -45,6 +53,9 @@ import {
 import type {
   CuentaCorriente,
   Transaccion,
+  TransaccionConDetalle,
+  AccionOnchain,
+  TipoAccion,
   MensajeDescifrado,
   MensajeChat,
   FacturaEscaneada,
@@ -75,6 +86,29 @@ function formatSaldo(saldo: number): string {
     style: "currency",
     currency: "ARS",
   }).format(Math.abs(saldo))
+}
+
+function ocEstadoLabel(estado: string): string {
+  const labels: Record<string, string> = {
+    NO_ANCLADA: "Sin anclar on-chain",
+    SIN_WALLET: "Falta vincular wallet",
+    REGISTRADA: "Registrada on-chain",
+    CONFIRMADA: "Factura confirmada",
+    PAGADA: "Pagada on-chain",
+    REEMBOLSO_SOLICITADO: "Reembolso solicitado",
+    REEMBOLSADA: "Reembolsada",
+    ERROR: "Error de anclaje",
+  }
+  return labels[estado] ?? estado
+}
+
+function accionLabel(tipo: string): string {
+  const labels: Record<string, string> = {
+    CONFIRMAR: "confirmar factura",
+    PAGAR: "confirmar pago",
+    REEMBOLSAR: "reembolso",
+  }
+  return labels[tipo] ?? tipo
 }
 
 function formatDate(dateStr: string): string {
@@ -124,10 +158,17 @@ export function AccountDetailDialog({
   const cuentaId = cuenta?.id ?? ""
   const userId = getUserId()
 
+  // Wallet / on-chain
+  const { address, isConnected } = useAccount()
+  const chainId = useChainId()
+  const { sign } = useSignLedgerAction()
+  const [firmandoTxId, setFirmandoTxId] = useState<string | null>(null)
+  const [accionError, setAccionError] = useState<string | null>(null)
+
   const [tab, setTab] = useState<"historial" | "chat">(initialTab)
 
   // Historial
-  const [transacciones, setTransacciones] = useState<Transaccion[]>([])
+  const [transacciones, setTransacciones] = useState<TransaccionConDetalle[]>([])
   const [loadingTx, setLoadingTx] = useState(false)
 
   // Chat E2EE
@@ -180,7 +221,7 @@ export function AccountDetailDialog({
     if (!cuentaId) return
     setLoadingTx(true)
     try {
-      const data = await apiFetch<Transaccion[]>(
+      const data = await apiFetch<TransaccionConDetalle[]>(
         `/cuentas-corrientes/${cuentaId}/transacciones`,
       )
       setTransacciones(data)
@@ -309,6 +350,25 @@ export function AccountDetailDialog({
     }
   }, [open, cuentaId, chatReady, sharedKey])
 
+  // ─── Realtime de acciones on-chain: refresca el historial cuando cambia una acción ───
+  useEffect(() => {
+    if (!open || !cuentaId) return
+    const supabase = createSupabaseBrowserClient()
+    const channel = supabase
+      .channel(`acciones:${cuentaId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "acciones_onchain" },
+        () => {
+          fetchTransacciones()
+        },
+      )
+      .subscribe()
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [open, cuentaId, fetchTransacciones])
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [mensajes])
@@ -381,6 +441,85 @@ export function AccountDetailDialog({
       // silent
     } finally {
       setSendingRequest(false)
+    }
+  }
+
+  // ─── Acciones co-firmadas on-chain (Monad) ───
+
+  function guardWallet(): string | null {
+    if (!isConnected || !address) return "Conectá tu wallet para firmar"
+    if (chainId !== monadTestnet.id) return "Cambiá tu wallet a Monad Testnet"
+    return null
+  }
+
+  async function handleIniciarAccion(tx: TransaccionConDetalle, tipo: TipoAccion) {
+    setAccionError(null)
+    const err = guardWallet()
+    if (err) {
+      setAccionError(err)
+      return
+    }
+    setFirmandoTxId(tx.id)
+    try {
+      const nonce = Date.now().toString()
+      const deadline = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+      const montoMinor = Math.round(tx.monto * 100)
+      const payload = buildSignPayload({
+        txIdUuid: tx.id,
+        tipo,
+        montoMinor,
+        nonce,
+        deadline,
+      })
+      const firma = await sign(payload)
+      await apiFetch(
+        `/cuentas-corrientes/${cuentaId}/transacciones/${tx.id}/acciones`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tipo_accion: tipo, firma, nonce, deadline }),
+        },
+      )
+      await fetchTransacciones()
+      onChanged?.()
+    } catch (e: any) {
+      setAccionError(e?.shortMessage ?? e?.message ?? "No se pudo firmar")
+    } finally {
+      setFirmandoTxId(null)
+    }
+  }
+
+  async function handleCoSign(tx: TransaccionConDetalle, accion: AccionOnchain) {
+    setAccionError(null)
+    const err = guardWallet()
+    if (err) {
+      setAccionError(err)
+      return
+    }
+    setFirmandoTxId(tx.id)
+    try {
+      const payload = buildSignPayload({
+        txIdUuid: tx.id,
+        tipo: accion.tipo_accion,
+        montoMinor: Math.round(tx.monto * 100),
+        nonce: accion.nonce,
+        deadline: accion.deadline,
+      })
+      const firma = await sign(payload)
+      await apiFetch(
+        `/cuentas-corrientes/${cuentaId}/acciones/${accion.id}/firmar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ firma }),
+        },
+      )
+      await fetchTransacciones()
+      onChanged?.()
+    } catch (e: any) {
+      setAccionError(e?.shortMessage ?? e?.message ?? "No se pudo firmar")
+    } finally {
+      setFirmandoTxId(null)
     }
   }
 
@@ -527,6 +666,7 @@ export function AccountDetailDialog({
           receptor_id: cuenta.contraparte.id,
           descripcion: "Factura escaneada",
           url_factura: facturaResult?.url_factura ?? undefined,
+          factura_hash: facturaResult?.factura_hash ?? undefined,
         }),
       })
       setShowFacturaModal(false)
@@ -623,6 +763,24 @@ export function AccountDetailDialog({
                   const pendiente = tx.estado === "PENDIENTE"
                   const puedePagar = tx.tipo === "FACTURA" && pendiente && tx.receptor_id === userId
 
+                  // On-chain (Monad)
+                  const ocs = tx.onchain
+                  const oc = ocs?.estado_onchain ?? "NO_ANCLADA"
+                  const pend = ocs?.accion_pendiente ?? null
+                  const yoSlotVacio = pend
+                    ? esEmisor
+                      ? !pend.firma_emisor
+                      : !pend.firma_receptor
+                    : false
+                  const deboFirmar =
+                    !!pend && pend.estado === "PENDIENTE_FIRMAS" && yoSlotVacio
+                  const esperandoContraparte =
+                    !!pend && pend.estado === "PENDIENTE_FIRMAS" && !yoSlotVacio
+                  const ambasWallets =
+                    !!ocs?.mi_wallet_linked && !!ocs?.contraparte_wallet_linked
+                  const firmando = firmandoTxId === tx.id
+                  const explorerHash = pend?.tx_hash ?? tx.anchor_tx_hash
+
                   return (
                     <div key={tx.id} className="rounded-xl border border-border bg-card p-4">
                       <div className="flex items-start justify-between gap-3">
@@ -665,9 +823,124 @@ export function AccountDetailDialog({
                           Pagar con Mercado Pago
                         </Button>
                       )}
+
+                      {/* ─── On-chain (Monad) ─── */}
+                      <div className="mt-3 rounded-lg border border-violet-500/20 bg-violet-500/5 p-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <ShieldCheck className="h-3.5 w-3.5 text-violet-500" />
+                            <span className="text-[11px] font-medium text-violet-600">
+                              {ocEstadoLabel(oc)}
+                            </span>
+                          </div>
+                          {explorerHash && (
+                            <a
+                              href={txUrl(explorerHash)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-[11px] text-violet-600 hover:underline"
+                            >
+                              Ver en Monad <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
+
+                        {ocs?.factura_hash && (
+                          <p className="mt-1 truncate text-[10px] text-muted-foreground" title={ocs.factura_hash}>
+                            Factura anclada · hash {ocs.factura_hash.slice(0, 10)}…
+                          </p>
+                        )}
+
+                        {(oc === "SIN_WALLET" || !ambasWallets) && oc !== "NO_ANCLADA" && (
+                          <p className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-600">
+                            <Link2 className="h-3 w-3" />
+                            {ocs?.mi_wallet_linked
+                              ? "La contraparte aún no vinculó su wallet"
+                              : "Vinculá tu wallet para firmar on-chain"}
+                          </p>
+                        )}
+
+                        {/* Pendiente de mi firma → co-firmar */}
+                        {deboFirmar && (
+                          <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2">
+                            <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-amber-700">
+                              <PenLine className="h-3 w-3" />
+                              Pendiente de tu firma ({accionLabel(pend!.tipo_accion)})
+                            </p>
+                            <Button
+                              onClick={() => handleCoSign(tx, pend!)}
+                              disabled={firmando}
+                              size="sm"
+                              className="w-full"
+                            >
+                              {firmando ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <PenLine className="mr-2 h-4 w-4" />
+                              )}
+                              Firmar y confirmar
+                            </Button>
+                          </div>
+                        )}
+
+                        {esperandoContraparte && (
+                          <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                            <Clock className="h-3 w-3" />
+                            Esperando la firma de la contraparte…
+                          </p>
+                        )}
+
+                        {/* Acciones que puedo iniciar (sin acción pendiente) */}
+                        {!pend && ambasWallets && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {oc === "REGISTRADA" && tx.tipo === "FACTURA" && (
+                              <Button
+                                onClick={() => handleIniciarAccion(tx, "CONFIRMAR")}
+                                disabled={firmando}
+                                size="sm"
+                                variant="outline"
+                                className="flex-1"
+                              >
+                                {firmando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                                Confirmar factura
+                              </Button>
+                            )}
+                            {oc === "CONFIRMADA" && (
+                              <Button
+                                onClick={() => handleIniciarAccion(tx, "PAGAR")}
+                                disabled={firmando}
+                                size="sm"
+                                variant="outline"
+                                className="flex-1"
+                              >
+                                {firmando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                                Confirmar pago on-chain
+                              </Button>
+                            )}
+                            {oc === "PAGADA" && (
+                              <Button
+                                onClick={() => handleIniciarAccion(tx, "REEMBOLSAR")}
+                                disabled={firmando}
+                                size="sm"
+                                variant="outline"
+                                className="flex-1"
+                              >
+                                {firmando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                                Solicitar reembolso
+                              </Button>
+                            )}
+                          </div>
+                        )}
+
+                      </div>
                     </div>
                   )
                 })}
+                {accionError && (
+                  <p className="rounded-lg bg-destructive/10 px-3 py-2 text-center text-xs text-destructive">
+                    {accionError}
+                  </p>
+                )}
               </div>
             )}
           </TabsContent>

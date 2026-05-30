@@ -3,6 +3,45 @@ export interface Profile {
   email: string;
   dni: string;
   nombre: string | null;
+  wallet_address?: string | null;
+}
+
+// ─── Monad on-chain ───
+
+export type EstadoOnchain =
+  | 'NO_ANCLADA'
+  | 'SIN_WALLET'
+  | 'REGISTRADA'
+  | 'CONFIRMADA'
+  | 'PAGADA'
+  | 'REEMBOLSO_SOLICITADO'
+  | 'REEMBOLSADA'
+  | 'ERROR';
+
+export type TipoAccion = 'CONFIRMAR' | 'PAGAR' | 'REEMBOLSAR';
+
+export interface AccionOnchain {
+  id: string;
+  transaccion_id: string;
+  tipo_accion: TipoAccion;
+  firma_emisor: string | null;
+  firma_receptor: string | null;
+  nonce: string;
+  deadline: number;
+  estado: 'PENDIENTE_FIRMAS' | 'LISTA' | 'ENVIADA' | 'CONFIRMADA' | 'FALLIDA';
+  tx_hash: string | null;
+  error_msg: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OnchainResumen {
+  estado_onchain: EstadoOnchain;
+  anchor_tx_hash: string | null;
+  factura_hash: string | null;
+  mi_wallet_linked: boolean;
+  contraparte_wallet_linked: boolean;
+  accion_pendiente: AccionOnchain | null;
 }
 
 export interface CuentaCorriente {
@@ -30,6 +69,9 @@ export interface Transaccion {
   metodo_pago_slug: string | null;
   mercado_pago_preference_id: string | null;
   mercado_pago_payment_id: string | null;
+  factura_hash: string | null;
+  anchor_tx_hash: string | null;
+  estado_onchain: EstadoOnchain;
   created_at: string;
   updated_at: string;
 }
@@ -38,6 +80,7 @@ export interface TransaccionConDetalle extends Transaccion {
   contraparte: Profile;
   direccion: 'HACIA_MI' | 'POR_MI';
   factura_url: string | null;
+  onchain?: OnchainResumen;
 }
 
 export interface MensajeChat {
@@ -70,6 +113,12 @@ export interface FacturaEscaneada {
   texto_extraido: string;
   confianza: 'alta' | 'media' | 'baja';
   url_factura: string | null;
+  factura_hash: string;
+}
+
+// Respuesta de iniciar una acción co-firmada.
+export interface IniciarAccionResponse {
+  accion: AccionOnchain;
 }
 
 export interface MercadoPagoResult {

@@ -3,6 +3,7 @@
 import { Bell, Menu, Settings, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { WalletButton } from "./wallet-button"
 
 interface DashboardHeaderProps {
   userName?: string | null
@@ -45,6 +46,7 @@ export function DashboardHeader({ userName, alerts = 0 }: DashboardHeaderProps) 
         </div>
 
         <div className="flex items-center gap-2">
+          <WalletButton />
           <Button variant="ghost" size="icon" className="relative">
             <Bell className="h-5 w-5" />
             {alerts > 0 && (

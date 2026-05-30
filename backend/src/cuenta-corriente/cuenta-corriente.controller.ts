@@ -21,6 +21,9 @@ import {
   ProcesarPagoMPDto,
   CreateMensajeDto,
   UpsertClavePublicaDto,
+  LinkWalletDto,
+  IniciarAccionDto,
+  FirmarAccionDto,
 } from './dto/create-transaccion.dto';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 
@@ -39,6 +42,18 @@ export class CuentaCorrienteController {
   @Get('mis-transacciones')
   misTransacciones(@Req() req: any) {
     return this.service.listarMisTransacciones(req.user.id);
+  }
+
+  // ─── Perfil / Wallet (Monad) — rutas estáticas antes de @Get(':id') ───
+
+  @Get('perfil')
+  getPerfil(@Req() req: any) {
+    return this.service.getPerfil(req.user.id);
+  }
+
+  @Put('wallet')
+  vincularWallet(@Body() dto: LinkWalletDto, @Req() req: any) {
+    return this.service.vincularWallet(req.user.id, dto.wallet_address);
   }
 
   @Get(':id')
@@ -70,6 +85,39 @@ export class CuentaCorrienteController {
     @Req() req: any,
   ) {
     return this.service.crearTransaccion(id, req.user.id, dto);
+  }
+
+  // ─── Acciones co-firmadas on-chain (Monad) ───
+
+  @Get(':id/transacciones/:txId/acciones')
+  listarAcciones(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('txId', ParseUUIDPipe) txId: string,
+    @Req() req: any,
+  ) {
+    return this.service.listarAcciones(id, txId, req.user.id);
+  }
+
+  @Post(':id/transacciones/:txId/acciones')
+  @HttpCode(HttpStatus.CREATED)
+  iniciarAccion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('txId', ParseUUIDPipe) txId: string,
+    @Body() dto: IniciarAccionDto,
+    @Req() req: any,
+  ) {
+    return this.service.iniciarAccion(id, txId, req.user.id, dto);
+  }
+
+  @Post(':id/acciones/:accionId/firmar')
+  @HttpCode(HttpStatus.OK)
+  firmarAccion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('accionId', ParseUUIDPipe) accionId: string,
+    @Body() dto: FirmarAccionDto,
+    @Req() req: any,
+  ) {
+    return this.service.firmarAccion(id, accionId, req.user.id, dto);
   }
 
   // ─── Mercado Pago (Checkout API) ───

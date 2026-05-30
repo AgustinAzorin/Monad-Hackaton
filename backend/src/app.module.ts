@@ -10,6 +10,7 @@ import { CatalogosModule } from './catalogos/catalogos.module';
 import { CuentasBancariasModule } from './cuentas-bancarias/cuentas-bancarias.module';
 import { FacturasModule } from './facturas/facturas.module';
 import { WebhookModule } from './webhook/webhook.module';
+import { BlockchainModule } from './blockchain/blockchain.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { WebhookModule } from './webhook/webhook.module';
     CuentasBancariasModule,
     FacturasModule,
     WebhookModule,
+    BlockchainModule,
   ],
   controllers: [AppController],
   providers: [AppService],
