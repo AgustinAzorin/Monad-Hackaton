@@ -15,14 +15,33 @@ import { CreateCuentaCorrienteDto } from './dto/create-cuenta-corriente.dto';
 export class CuentaCorrienteService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
+  private async getProfiles(ids: string[]): Promise<Map<string, Profile>> {
+    if (ids.length === 0) return new Map();
+    const supabase = this.supabaseService.getClient();
+    const uniqueIds = [...new Set(ids)];
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, email, dni, nombre')
+      .in('id', uniqueIds);
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    const map = new Map<string, Profile>();
+    for (const p of data ?? []) {
+      map.set(p.id, p as Profile);
+    }
+    return map;
+  }
+
   async findByUsuario(usuarioId: string): Promise<CuentaCorrienteConPerfil[]> {
     const supabase = this.supabaseService.getClient();
 
     const { data, error } = await supabase
       .from('cuentas_corrientes')
-      .select(
-        '*, perfil_a:profiles!usuario_a_id(id, email, dni, nombre), perfil_b:profiles!usuario_b_id(id, email, dni, nombre)',
-      )
+      .select('*')
       .or(`usuario_a_id.eq.${usuarioId},usuario_b_id.eq.${usuarioId}`)
       .order('updated_at', { ascending: false });
 
@@ -30,20 +49,26 @@ export class CuentaCorrienteService {
       throw new BadRequestException(error.message);
     }
 
-    return (data ?? []).map((row: any) => {
-      const esA = row.usuario_a_id === usuarioId;
-      const contraparte: Profile = esA ? row.perfil_b : row.perfil_a;
-      const saldo_relativo = esA ? row.saldo : -row.saldo;
+    const cuentas = (data ?? []) as CuentaCorriente[];
+
+    const contraparteIds = cuentas.map((c) =>
+      c.usuario_a_id === usuarioId ? c.usuario_b_id : c.usuario_a_id,
+    );
+    const profiles = await this.getProfiles(contraparteIds);
+
+    return cuentas.map((c) => {
+      const esA = c.usuario_a_id === usuarioId;
+      const contraparteId = esA ? c.usuario_b_id : c.usuario_a_id;
 
       return {
-        id: row.id,
-        usuario_a_id: row.usuario_a_id,
-        usuario_b_id: row.usuario_b_id,
-        saldo: row.saldo,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-        contraparte,
-        saldo_relativo,
+        ...c,
+        contraparte: profiles.get(contraparteId) ?? {
+          id: contraparteId,
+          email: '',
+          dni: '',
+          nombre: null,
+        },
+        saldo_relativo: esA ? c.saldo : -c.saldo,
       };
     });
   }
@@ -132,9 +157,7 @@ export class CuentaCorrienteService {
 
     const { data, error } = await supabase
       .from('cuentas_corrientes')
-      .select(
-        '*, perfil_a:profiles!usuario_a_id(id, email, dni, nombre), perfil_b:profiles!usuario_b_id(id, email, dni, nombre)',
-      )
+      .select('*')
       .eq('id', id)
       .or(`usuario_a_id.eq.${usuarioId},usuario_b_id.eq.${usuarioId}`)
       .single();
@@ -143,19 +166,21 @@ export class CuentaCorrienteService {
       throw new BadRequestException(error.message);
     }
 
-    const row = data as any;
-    const esA = row.usuario_a_id === usuarioId;
-    const contraparte: Profile = esA ? row.perfil_b : row.perfil_a;
+    const cuenta = data as CuentaCorriente;
+    const esA = cuenta.usuario_a_id === usuarioId;
+    const contraparteId = esA ? cuenta.usuario_b_id : cuenta.usuario_a_id;
+
+    const profiles = await this.getProfiles([contraparteId]);
 
     return {
-      id: row.id,
-      usuario_a_id: row.usuario_a_id,
-      usuario_b_id: row.usuario_b_id,
-      saldo: row.saldo,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      contraparte,
-      saldo_relativo: esA ? row.saldo : -row.saldo,
+      ...cuenta,
+      contraparte: profiles.get(contraparteId) ?? {
+        id: contraparteId,
+        email: '',
+        dni: '',
+        nombre: null,
+      },
+      saldo_relativo: esA ? cuenta.saldo : -cuenta.saldo,
     };
   }
 }
