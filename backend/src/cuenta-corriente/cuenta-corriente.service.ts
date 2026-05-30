@@ -18,11 +18,11 @@ import {
 import { CreateCuentaCorrienteDto } from './dto/create-cuenta-corriente.dto';
 import {
   CreateTransaccionDto,
-  CreatePagoMercadoPagoDto,
+  ProcesarPagoMPDto,
   CreateMensajeDto,
   UpsertClavePublicaDto,
 } from './dto/create-transaccion.dto';
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Payment } from 'mercadopago';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse');
 
@@ -311,12 +311,12 @@ export class CuentaCorrienteService {
     if (error) throw new BadRequestException(error.message);
   }
 
-  // ─── Mercado Pago ───
+  // ─── Mercado Pago (Checkout API + Payment) ───
 
-  async crearPreferenciaMercadoPago(
+  async procesarPagoMercadoPago(
     cuentaId: string,
     usuarioId: string,
-    dto: CreatePagoMercadoPagoDto,
+    dto: ProcesarPagoMPDto,
   ) {
     const cuenta = await this.assertUserInCuenta(cuentaId, usuarioId);
 
@@ -332,7 +332,7 @@ export class CuentaCorrienteService {
       .from('transacciones')
       .insert({
         cuenta_corriente_id: cuentaId,
-        monto: dto.monto,
+        monto: dto.transaction_amount,
         tipo: 'PAGO',
         estado: 'PENDIENTE',
         emisor_id: usuarioId,
@@ -348,43 +348,61 @@ export class CuentaCorrienteService {
       'BACKEND_PUBLIC_URL',
       'http://localhost:3001',
     );
-    const frontendUrl = this.configService.get<string>(
-      'CORS_ORIGIN',
-      'http://localhost:3000',
-    );
 
-    const preference = new Preference(this.mpClient);
-    const result = await preference.create({
+    const payment = new Payment(this.mpClient);
+
+    const payerIdentification =
+      dto.payer_identification_type && dto.payer_identification_number
+        ? {
+            type: dto.payer_identification_type,
+            number: dto.payer_identification_number,
+          }
+        : undefined;
+
+    const result = await payment.create({
       body: {
-        items: [
-          {
-            id: tx.id,
-            title: dto.descripcion || `Pago cuenta corriente`,
-            quantity: 1,
-            unit_price: dto.monto,
-            currency_id: 'ARS',
-          },
-        ],
+        transaction_amount: dto.transaction_amount,
+        token: dto.token,
+        description: dto.descripcion || 'Pago cuenta corriente',
+        installments: dto.installments,
+        payment_method_id: dto.payment_method_id,
+        issuer_id: dto.issuer_id ? Number(dto.issuer_id) : undefined,
+        payer: {
+          email: dto.payer_email,
+          identification: payerIdentification,
+        },
         external_reference: tx.id,
         notification_url: `${backendUrl}/webhook/mercado-pago`,
-        back_urls: {
-          success: `${frontendUrl}/cuentas/${cuentaId}?pago=ok`,
-          failure: `${frontendUrl}/cuentas/${cuentaId}?pago=error`,
-          pending: `${frontendUrl}/cuentas/${cuentaId}?pago=pendiente`,
-        },
-        auto_return: 'approved',
+      },
+      requestOptions: {
+        idempotencyKey: tx.id,
       },
     });
 
-    await supabase
-      .from('transacciones')
-      .update({ mercado_pago_preference_id: result.id })
-      .eq('id', tx.id);
+    const mpPaymentId = String(result.id);
+    const status = result.status;
+
+    if (status === 'approved') {
+      await supabase
+        .from('transacciones')
+        .update({
+          estado: 'COMPLETADO',
+          mercado_pago_payment_id: mpPaymentId,
+        })
+        .eq('id', tx.id);
+
+      await this.actualizarSaldo(cuentaId, cuenta, usuarioId, dto.transaction_amount);
+    } else {
+      await supabase
+        .from('transacciones')
+        .update({ mercado_pago_payment_id: mpPaymentId })
+        .eq('id', tx.id);
+    }
 
     return {
-      preference_id: result.id,
-      init_point: result.init_point,
-      sandbox_init_point: result.sandbox_init_point,
+      status,
+      status_detail: result.status_detail,
+      payment_id: mpPaymentId,
       transaccion_id: tx.id,
     };
   }
@@ -392,21 +410,17 @@ export class CuentaCorrienteService {
   async procesarWebhookMercadoPago(paymentId: string): Promise<void> {
     if (!this.mpClient) return;
 
-    const response = await fetch(
-      `https://api.mercadopago.com/v1/payments/${paymentId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${this.configService.get<string>('MERCADO_PAGO_ACCESS_TOKEN')}`,
-        },
-      },
-    );
+    const mpPayment = new Payment(this.mpClient);
+    let result: any;
+    try {
+      result = await mpPayment.get({ id: paymentId });
+    } catch {
+      return;
+    }
 
-    if (!response.ok) return;
+    if (result.status !== 'approved') return;
 
-    const payment = await response.json();
-    if (payment.status !== 'approved') return;
-
-    const txId = payment.external_reference;
+    const txId = result.external_reference;
     if (!txId) return;
 
     const supabase = this.supabaseService.getClient();

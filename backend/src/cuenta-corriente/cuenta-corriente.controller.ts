@@ -18,7 +18,7 @@ import { CuentaCorrienteService } from './cuenta-corriente.service';
 import { CreateCuentaCorrienteDto } from './dto/create-cuenta-corriente.dto';
 import {
   CreateTransaccionDto,
-  CreatePagoMercadoPagoDto,
+  ProcesarPagoMPDto,
   CreateMensajeDto,
   UpsertClavePublicaDto,
 } from './dto/create-transaccion.dto';
@@ -65,16 +65,16 @@ export class CuentaCorrienteController {
     return this.service.crearTransaccion(id, req.user.id, dto);
   }
 
-  // ─── Mercado Pago ───
+  // ─── Mercado Pago (Checkout API) ───
 
   @Post(':id/mercado-pago')
   @HttpCode(HttpStatus.CREATED)
-  crearPagoMercadoPago(
+  procesarPago(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: CreatePagoMercadoPagoDto,
+    @Body() dto: ProcesarPagoMPDto,
     @Req() req: any,
   ) {
-    return this.service.crearPreferenciaMercadoPago(id, req.user.id, dto);
+    return this.service.procesarPagoMercadoPago(id, req.user.id, dto);
   }
 
   // ─── Escaneo de Facturas ───

@@ -21,8 +21,10 @@ import type {
   MensajeDescifrado,
   MensajeChat,
   FacturaEscaneada,
-  MercadoPagoPreference,
+  MercadoPagoResult,
 } from '@/types/cuenta';
+
+const MP_PUBLIC_KEY = process.env.NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY ?? '';
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
@@ -109,6 +111,11 @@ export default function CuentaDetallePage() {
   const [pagoMonto, setPagoMonto] = useState('');
   const [pagoDesc, setPagoDesc] = useState('');
   const [pagando, setPagando] = useState(false);
+  const [pagoStep, setPagoStep] = useState<'monto' | 'tarjeta' | 'resultado'>('monto');
+  const [pagoResultado, setPagoResultado] = useState<MercadoPagoResult | null>(null);
+  const [pagoError, setPagoError] = useState<string | null>(null);
+  const mpBrickRef = useRef<HTMLDivElement>(null);
+  const brickControllerRef = useRef<any>(null);
 
   // Factura
   const [facturaFile, setFacturaFile] = useState<File | null>(null);
@@ -312,56 +319,109 @@ export default function CuentaDetallePage() {
     }
   }
 
-  // ─── Pagar con Mercado Pago ───
-  async function handlePagoMP(e: FormEvent) {
-    e.preventDefault();
-    if (!cuenta) return;
-    setPagando(true);
+  // ─── Iniciar flujo Payment Brick ───
+  async function initPaymentBrick(amount: number) {
+    if (!MP_PUBLIC_KEY) {
+      setPagoError('Falta configurar NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY');
+      return;
+    }
+
     try {
-      const result = await apiFetch<MercadoPagoPreference>(
-        `/cuentas-corrientes/${cuentaId}/mercado-pago`,
+      const { loadMercadoPago } = await import('@mercadopago/sdk-js');
+      await loadMercadoPago();
+      const mp = new (window as any).MercadoPago(MP_PUBLIC_KEY, { locale: 'es-AR' });
+      const bricksBuilder = mp.bricks();
+
+      brickControllerRef.current = await bricksBuilder.create(
+        'cardPayment',
+        'mp-card-brick',
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            monto: parseFloat(pagoMonto),
-            descripcion: pagoDesc || undefined,
-            receptor_id: cuenta.contraparte.id,
-          }),
+          initialization: { amount },
+          customization: {
+            visual: {
+              style: { theme: 'dark' },
+              texts: { formSubmit: 'Pagar' },
+            },
+          },
+          callbacks: {
+            onSubmit: async (cardFormData: any) => {
+              setPagando(true);
+              setPagoError(null);
+              try {
+                const result = await apiFetch<MercadoPagoResult>(
+                  `/cuentas-corrientes/${cuentaId}/mercado-pago`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      token: cardFormData.token,
+                      payment_method_id: cardFormData.payment_method_id,
+                      transaction_amount: cardFormData.transaction_amount,
+                      installments: cardFormData.installments,
+                      issuer_id: cardFormData.issuer_id
+                        ? String(cardFormData.issuer_id)
+                        : undefined,
+                      payer_email: cardFormData.payer?.email ?? '',
+                      payer_identification_type:
+                        cardFormData.payer?.identification?.type,
+                      payer_identification_number:
+                        cardFormData.payer?.identification?.number,
+                      receptor_id: cuenta!.contraparte.id,
+                      descripcion: pagoDesc || undefined,
+                    }),
+                  },
+                );
+                setPagoResultado(result);
+                setPagoStep('resultado');
+                fetchTransacciones();
+                fetchCuenta();
+              } catch (err: any) {
+                setPagoError(err.message);
+              } finally {
+                setPagando(false);
+              }
+            },
+            onReady: () => {},
+            onError: (error: any) => {
+              console.error('MP Brick error:', error);
+            },
+          },
         },
       );
-      window.open(result.init_point || result.sandbox_init_point, '_blank');
-      setShowPagoModal(false);
-      setPagoMonto('');
-      setPagoDesc('');
-      fetchTransacciones();
     } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setPagando(false);
+      setPagoError(`Error al cargar Mercado Pago: ${err.message}`);
     }
   }
 
+  function handleContinuarAlPago(e: FormEvent) {
+    e.preventDefault();
+    if (!pagoMonto) return;
+    setPagoStep('tarjeta');
+    setPagoError(null);
+    setTimeout(() => initPaymentBrick(parseFloat(pagoMonto)), 100);
+  }
+
   // ─── Pagar factura pendiente con Mercado Pago ───
-  async function handlePagarFactura(tx: Transaccion) {
+  function handlePagarFactura(tx: Transaccion) {
     if (!cuenta) return;
-    try {
-      const result = await apiFetch<MercadoPagoPreference>(
-        `/cuentas-corrientes/${cuentaId}/mercado-pago`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            monto: tx.monto,
-            descripcion: `Pago factura - ${tx.descripcion || ''}`,
-            receptor_id: tx.emisor_id === userId ? tx.receptor_id : tx.emisor_id,
-          }),
-        },
-      );
-      window.open(result.init_point || result.sandbox_init_point, '_blank');
-    } catch (err: any) {
-      alert(err.message);
-    }
+    setPagoMonto(String(tx.monto));
+    setPagoDesc(`Pago factura - ${tx.descripcion || ''}`);
+    setPagoStep('tarjeta');
+    setPagoError(null);
+    setPagoResultado(null);
+    setShowPagoModal(true);
+    setTimeout(() => initPaymentBrick(tx.monto), 200);
+  }
+
+  function closePagoModal() {
+    brickControllerRef.current?.unmount?.();
+    brickControllerRef.current = null;
+    setShowPagoModal(false);
+    setPagoStep('monto');
+    setPagoMonto('');
+    setPagoDesc('');
+    setPagoError(null);
+    setPagoResultado(null);
   }
 
   // ─── Escanear factura ───
@@ -734,6 +794,9 @@ export default function CuentaDetallePage() {
             onClick={() => {
               setPagoMonto('');
               setPagoDesc('');
+              setPagoStep('monto');
+              setPagoError(null);
+              setPagoResultado(null);
               setShowPagoModal(true);
             }}
             className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 text-sm font-medium text-white transition hover:bg-indigo-500"
@@ -765,15 +828,15 @@ export default function CuentaDetallePage() {
         <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setShowPagoModal(false)}
+            onClick={closePagoModal}
           />
-          <div className="relative w-full max-w-md rounded-t-2xl border border-white/10 bg-zinc-900 p-6 shadow-2xl sm:rounded-2xl">
+          <div className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-white/10 bg-zinc-900 p-6 shadow-2xl sm:rounded-2xl">
             <div className="mb-5 flex items-center justify-between">
               <h2 className="text-lg font-bold text-zinc-100">
-                Realizar Pago
+                {pagoStep === 'resultado' ? 'Resultado del Pago' : 'Realizar Pago'}
               </h2>
               <button
-                onClick={() => setShowPagoModal(false)}
+                onClick={closePagoModal}
                 className="rounded-lg p-1 text-zinc-500 transition hover:bg-white/10"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="size-5">
@@ -781,49 +844,132 @@ export default function CuentaDetallePage() {
                 </svg>
               </button>
             </div>
-            <form onSubmit={handlePagoMP} className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                  Monto (ARS)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  value={pagoMonto}
-                  onChange={(e) => setPagoMonto(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                />
+
+            {pagoError && (
+              <div className="mb-4 rounded-lg border border-red-500/30 bg-red-950/20 px-4 py-3 text-sm text-red-400">
+                {pagoError}
               </div>
+            )}
+
+            {/* Step 1: Monto */}
+            {pagoStep === 'monto' && (
+              <form onSubmit={handleContinuarAlPago} className="space-y-4">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+                    Monto (ARS)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    value={pagoMonto}
+                    onChange={(e) => setPagoMonto(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+                    Descripción (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={pagoDesc}
+                    onChange={(e) => setPagoDesc(e.target.value)}
+                    placeholder="Motivo del pago"
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!pagoMonto}
+                  className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  Continuar al pago
+                </button>
+              </form>
+            )}
+
+            {/* Step 2: MercadoPago Card Payment Brick */}
+            {pagoStep === 'tarjeta' && (
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                  Descripción (opcional)
-                </label>
-                <input
-                  type="text"
-                  value={pagoDesc}
-                  onChange={(e) => setPagoDesc(e.target.value)}
-                  placeholder="Motivo del pago"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={pagando || !pagoMonto}
-                className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {pagando ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Procesando...
-                  </span>
-                ) : (
-                  'Pagar con Mercado Pago'
+                <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-zinc-400">Monto a pagar</p>
+                  <p className="text-xl font-bold text-indigo-400">
+                    {formatSaldo(parseFloat(pagoMonto))}
+                  </p>
+                </div>
+
+                {pagando && (
+                  <div className="flex items-center justify-center gap-2 py-4">
+                    <span className="size-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    <span className="text-sm text-zinc-400">Procesando pago...</span>
+                  </div>
                 )}
-              </button>
-            </form>
+
+                <div id="mp-card-brick" ref={mpBrickRef} />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    brickControllerRef.current?.unmount?.();
+                    brickControllerRef.current = null;
+                    setPagoStep('monto');
+                  }}
+                  className="mt-4 w-full rounded-lg border border-white/10 py-2 text-sm text-zinc-400 transition hover:bg-white/10"
+                >
+                  Volver
+                </button>
+              </div>
+            )}
+
+            {/* Step 3: Resultado */}
+            {pagoStep === 'resultado' && pagoResultado && (
+              <div className="space-y-4">
+                <div
+                  className={`rounded-xl p-6 text-center ${
+                    pagoResultado.status === 'approved'
+                      ? 'bg-emerald-500/10'
+                      : pagoResultado.status === 'pending' || pagoResultado.status === 'in_process'
+                        ? 'bg-amber-500/10'
+                        : 'bg-red-500/10'
+                  }`}
+                >
+                  {pagoResultado.status === 'approved' ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-3 size-12 text-emerald-400">
+                      <path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12Zm13.36-1.814a.75.75 0 1 0-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.14-.094l3.75-5.25Z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={`mx-auto mb-3 size-12 ${pagoResultado.status === 'pending' || pagoResultado.status === 'in_process' ? 'text-amber-400' : 'text-red-400'}`}>
+                      <path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm-1.72 6.97a.75.75 0 1 0-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 1 0 1.06 1.06L12 13.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L13.06 12l1.72-1.72a.75.75 0 1 0-1.06-1.06L12 10.94l-1.72-1.72Z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                  <p className={`text-lg font-bold ${
+                    pagoResultado.status === 'approved'
+                      ? 'text-emerald-400'
+                      : pagoResultado.status === 'pending' || pagoResultado.status === 'in_process'
+                        ? 'text-amber-400'
+                        : 'text-red-400'
+                  }`}>
+                    {pagoResultado.status === 'approved'
+                      ? 'Pago aprobado'
+                      : pagoResultado.status === 'pending' || pagoResultado.status === 'in_process'
+                        ? 'Pago pendiente'
+                        : 'Pago rechazado'}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {pagoResultado.status_detail}
+                  </p>
+                </div>
+                <button
+                  onClick={closePagoModal}
+                  className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-500"
+                >
+                  Cerrar
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

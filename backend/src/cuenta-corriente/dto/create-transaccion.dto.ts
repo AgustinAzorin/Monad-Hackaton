@@ -25,17 +25,41 @@ export class CreateTransaccionDto {
   descripcion?: string;
 }
 
-export class CreatePagoMercadoPagoDto {
+export class ProcesarPagoMPDto {
+  @IsString()
+  token!: string;
+
+  @IsString()
+  payment_method_id!: string;
+
   @IsNumber()
   @Min(0.01)
-  monto!: number;
+  transaction_amount!: number;
+
+  @IsNumber()
+  installments!: number;
+
+  @IsOptional()
+  @IsString()
+  issuer_id?: string;
+
+  @IsString()
+  payer_email!: string;
+
+  @IsOptional()
+  @IsString()
+  payer_identification_type?: string;
+
+  @IsOptional()
+  @IsString()
+  payer_identification_number?: string;
+
+  @IsUUID()
+  receptor_id!: string;
 
   @IsOptional()
   @IsString()
   descripcion?: string;
-
-  @IsUUID()
-  receptor_id!: string;
 }
 
 export class CreateMensajeDto {

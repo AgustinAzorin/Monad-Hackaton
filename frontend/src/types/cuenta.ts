@@ -63,9 +63,9 @@ export interface FacturaEscaneada {
   confianza: 'alta' | 'media' | 'baja';
 }
 
-export interface MercadoPagoPreference {
-  preference_id: string;
-  init_point: string;
-  sandbox_init_point: string;
+export interface MercadoPagoResult {
+  status: string;
+  status_detail: string;
+  payment_id: string;
   transaccion_id: string;
 }
