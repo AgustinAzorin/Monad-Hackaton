@@ -127,7 +127,7 @@ export function Dashboard() {
             </section>
 
             <section>
-              <NavigationTabs cuentas={cuentas} transacciones={transacciones} />
+              <NavigationTabs cuentas={cuentas} transacciones={transacciones} onRefresh={fetchData} />
             </section>
           </div>
         )}

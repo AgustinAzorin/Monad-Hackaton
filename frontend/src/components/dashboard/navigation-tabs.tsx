@@ -11,6 +11,7 @@ import type { CuentaCorriente, TransaccionConDetalle } from "@/types/cuenta"
 interface NavigationTabsProps {
   cuentas: CuentaCorriente[]
   transacciones: TransaccionConDetalle[]
+  onRefresh?: () => void
 }
 
 const tabs = [
@@ -20,7 +21,7 @@ const tabs = [
   { id: "notifications", label: "Alertas", icon: Bell },
 ]
 
-export function NavigationTabs({ cuentas, transacciones }: NavigationTabsProps) {
+export function NavigationTabs({ cuentas, transacciones, onRefresh }: NavigationTabsProps) {
   return (
     <Tabs defaultValue="transactions" className="w-full">
       <TabsList className="grid h-auto w-full grid-cols-4 gap-1 rounded-xl bg-muted p-1">
@@ -42,7 +43,7 @@ export function NavigationTabs({ cuentas, transacciones }: NavigationTabsProps) 
           <TransactionsTab transacciones={transacciones} />
         </TabsContent>
         <TabsContent value="clients" className="m-0">
-          <ClientsTab cuentas={cuentas} transacciones={transacciones} />
+          <ClientsTab cuentas={cuentas} transacciones={transacciones} onRefresh={onRefresh} />
         </TabsContent>
         <TabsContent value="categories" className="m-0">
           <CategoriesTab />
