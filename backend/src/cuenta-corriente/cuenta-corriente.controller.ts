@@ -34,6 +34,13 @@ export class CuentaCorrienteController {
     return this.service.findByUsuario(req.user.id);
   }
 
+  // Todas las transacciones del usuario (todas sus cuentas). Debe declararse
+  // antes de @Get(':id') para que la ruta estática no la capture el parámetro.
+  @Get('mis-transacciones')
+  misTransacciones(@Req() req: any) {
+    return this.service.listarMisTransacciones(req.user.id);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
     return this.service.findOne(id, req.user.id);
@@ -92,7 +99,7 @@ export class CuentaCorrienteController {
     @Req() req: any,
   ) {
     await this.service.findOne(id, req.user.id);
-    return this.service.escanearFactura(file);
+    return this.service.escanearFactura(id, file);
   }
 
   // ─── Chat (E2EE) ───

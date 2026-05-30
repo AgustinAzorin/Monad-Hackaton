@@ -35,6 +35,14 @@ export interface Transaccion {
   updated_at: string;
 }
 
+export interface TransaccionConDetalle extends Transaccion {
+  contraparte: Profile;
+  // 'HACIA_MI': soy el receptor; 'POR_MI': soy el emisor
+  direccion: 'HACIA_MI' | 'POR_MI';
+  // URL firmada y temporal para abrir el PDF de la factura (si existe)
+  factura_url: string | null;
+}
+
 export interface MensajeChat {
   id: string;
   cuenta_corriente_id: string;
@@ -56,4 +64,6 @@ export interface FacturaEscaneada {
   monto_total: number | null;
   texto_extraido: string;
   confianza: 'alta' | 'media' | 'baja';
+  // Path del PDF ya almacenado en el bucket 'facturas' (para adjuntar a la transacción)
+  url_factura: string | null;
 }

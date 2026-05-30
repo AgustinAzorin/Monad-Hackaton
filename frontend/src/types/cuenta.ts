@@ -32,6 +32,12 @@ export interface Transaccion {
   updated_at: string;
 }
 
+export interface TransaccionConDetalle extends Transaccion {
+  contraparte: Profile;
+  direccion: 'HACIA_MI' | 'POR_MI';
+  factura_url: string | null;
+}
+
 export interface MensajeChat {
   id: string;
   cuenta_corriente_id: string;
@@ -61,6 +67,7 @@ export interface FacturaEscaneada {
   monto_total: number | null;
   texto_extraido: string;
   confianza: 'alta' | 'media' | 'baja';
+  url_factura: string | null;
 }
 
 export interface MercadoPagoResult {

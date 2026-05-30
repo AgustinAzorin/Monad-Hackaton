@@ -11,10 +11,12 @@ import {
   CuentaCorrienteConPerfil,
   Profile,
   Transaccion,
+  TransaccionConDetalle,
   MensajeChat,
   ClavePublica,
   FacturaEscaneada,
 } from './cuenta-corriente.entity';
+import { randomUUID } from 'crypto';
 import { CreateCuentaCorrienteDto } from './dto/create-cuenta-corriente.dto';
 import {
   CreateTransaccionDto,
@@ -25,6 +27,9 @@ import {
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse');
+
+const FACTURAS_BUCKET = 'facturas';
+const FACTURA_URL_TTL_SECONDS = 60 * 60; // 1 hora
 
 @Injectable()
 export class CuentaCorrienteService {
@@ -59,6 +64,17 @@ export class CuentaCorrienteService {
       map.set(p.id, p as Profile);
     }
     return map;
+  }
+
+  // Genera una URL firmada temporal para abrir el PDF de la factura guardado.
+  private async signFacturaUrl(path: string | null): Promise<string | null> {
+    if (!path) return null;
+    const supabase = this.supabaseService.getClient();
+    const { data, error } = await supabase.storage
+      .from(FACTURAS_BUCKET)
+      .createSignedUrl(path, FACTURA_URL_TTL_SECONDS);
+    if (error || !data) return null;
+    return data.signedUrl;
   }
 
   async findByUsuario(usuarioId: string): Promise<CuentaCorrienteConPerfil[]> {
@@ -291,6 +307,48 @@ export class CuentaCorrienteService {
     return (data ?? []) as Transaccion[];
   }
 
+  // Todas las transacciones del usuario (en todas sus cuentas corrientes),
+  // enriquecidas con la contraparte, la dirección y la URL firmada de la factura.
+  async listarMisTransacciones(
+    usuarioId: string,
+  ): Promise<TransaccionConDetalle[]> {
+    const supabase = this.supabaseService.getClient();
+
+    const { data, error } = await supabase
+      .from('transacciones')
+      .select('*')
+      .or(`emisor_id.eq.${usuarioId},receptor_id.eq.${usuarioId}`)
+      .order('created_at', { ascending: false });
+
+    if (error) throw new BadRequestException(error.message);
+
+    const transacciones = (data ?? []) as Transaccion[];
+
+    const contraparteIds = transacciones.map((tx) =>
+      tx.emisor_id === usuarioId ? tx.receptor_id : tx.emisor_id,
+    );
+    const profiles = await this.getProfiles(contraparteIds);
+
+    return Promise.all(
+      transacciones.map(async (tx) => {
+        const soyReceptor = tx.receptor_id === usuarioId;
+        const contraparteId = soyReceptor ? tx.emisor_id : tx.receptor_id;
+
+        return {
+          ...tx,
+          contraparte: profiles.get(contraparteId) ?? {
+            id: contraparteId,
+            email: '',
+            dni: '',
+            nombre: null,
+          },
+          direccion: soyReceptor ? 'HACIA_MI' : 'POR_MI',
+          factura_url: await this.signFacturaUrl(tx.url_factura),
+        } as TransaccionConDetalle;
+      }),
+    );
+  }
+
   private async actualizarSaldo(
     cuentaId: string,
     cuenta: CuentaCorriente,
@@ -459,7 +517,10 @@ export class CuentaCorrienteService {
 
   // ─── Escaneo de Facturas ───
 
-  async escanearFactura(file: Express.Multer.File): Promise<FacturaEscaneada> {
+  async escanearFactura(
+    cuentaId: string,
+    file: Express.Multer.File,
+  ): Promise<FacturaEscaneada> {
     let textoExtraido = '';
 
     if (file.mimetype === 'application/pdf') {
@@ -473,10 +534,21 @@ export class CuentaCorrienteService {
 
     const montoTotal = this.extraerMontoTotal(textoExtraido);
 
+    // Guardamos el PDF en el bucket privado para poder verlo luego desde el historial.
+    const supabase = this.supabaseService.getClient();
+    const path = `${cuentaId}/${randomUUID()}.pdf`;
+    const { error: uploadError } = await supabase.storage
+      .from(FACTURAS_BUCKET)
+      .upload(path, file.buffer, {
+        contentType: 'application/pdf',
+        upsert: false,
+      });
+
     return {
       monto_total: montoTotal,
       texto_extraido: textoExtraido.substring(0, 2000),
       confianza: montoTotal ? 'alta' : 'baja',
+      url_factura: uploadError ? null : path,
     };
   }
 

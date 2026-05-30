@@ -471,6 +471,7 @@ export default function CuentaDetallePage() {
           tipo: 'FACTURA',
           receptor_id: cuenta.contraparte.id,
           descripcion: 'Factura escaneada',
+          url_factura: facturaResult?.url_factura ?? undefined,
         }),
       });
       setShowFacturaModal(false);
