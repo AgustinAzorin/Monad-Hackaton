@@ -11,17 +11,16 @@ import type { CuentaCorriente, TransaccionConDetalle } from "@/types/cuenta"
 interface NavigationTabsProps {
   cuentas: CuentaCorriente[]
   transacciones: TransaccionConDetalle[]
-  txCountByCuenta: Record<string, number>
 }
 
 const tabs = [
   { id: "transactions", label: "Transacciones", icon: ArrowLeftRight },
-  { id: "clients", label: "Contactos", icon: Users },
+  { id: "clients", label: "Cuentas", icon: Users },
   { id: "categories", label: "Categorías", icon: FolderKanban },
   { id: "notifications", label: "Alertas", icon: Bell },
 ]
 
-export function NavigationTabs({ cuentas, transacciones, txCountByCuenta }: NavigationTabsProps) {
+export function NavigationTabs({ cuentas, transacciones }: NavigationTabsProps) {
   return (
     <Tabs defaultValue="transactions" className="w-full">
       <TabsList className="grid h-auto w-full grid-cols-4 gap-1 rounded-xl bg-muted p-1">
@@ -33,7 +32,7 @@ export function NavigationTabs({ cuentas, transacciones, txCountByCuenta }: Navi
           >
             <tab.icon className="h-4 w-4" />
             <span className="hidden sm:inline">{tab.label}</span>
-            <span className="text-[10px] sm:hidden">{tab.label.slice(0, 6)}</span>
+            <span className="sm:hidden text-[10px]">{tab.label.slice(0, 6)}</span>
           </TabsTrigger>
         ))}
       </TabsList>
@@ -43,10 +42,10 @@ export function NavigationTabs({ cuentas, transacciones, txCountByCuenta }: Navi
           <TransactionsTab transacciones={transacciones} />
         </TabsContent>
         <TabsContent value="clients" className="m-0">
-          <ClientsTab cuentas={cuentas} txCountByCuenta={txCountByCuenta} />
+          <ClientsTab cuentas={cuentas} transacciones={transacciones} />
         </TabsContent>
         <TabsContent value="categories" className="m-0">
-          <CategoriesTab transacciones={transacciones} />
+          <CategoriesTab />
         </TabsContent>
         <TabsContent value="notifications" className="m-0">
           <NotificationsTab transacciones={transacciones} cuentas={cuentas} />

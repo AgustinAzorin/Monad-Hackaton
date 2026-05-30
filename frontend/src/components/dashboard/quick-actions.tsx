@@ -1,32 +1,49 @@
 "use client"
 
-import { ArrowDownToLine, ArrowUpFromLine, QrCode, Link2, Send, FileText } from "lucide-react"
-import Link from "next/link"
+import { useState } from "react"
+import { Plus, Building2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { NewTransactionForm } from "./new-transaction-form"
+import { NewAccountForm } from "./new-account-form"
+import type { CuentaCorriente } from "@/types/cuenta"
 
-const actions = [
-  { icon: ArrowDownToLine, label: "Ingresar", color: "bg-primary/10 text-primary", href: "/cuentas" },
-  { icon: Send, label: "Transferir", color: "bg-primary/10 text-primary", href: "/cuentas" },
-  { icon: ArrowUpFromLine, label: "Retirar", color: "bg-primary/10 text-primary", href: "/cuentas" },
-  { icon: QrCode, label: "Cobrar QR", color: "bg-success/10 text-success", href: "/cuentas" },
-  { icon: Link2, label: "Link de pago", color: "bg-success/10 text-success", href: "/cuentas" },
-  { icon: FileText, label: "Facturas", color: "bg-warning/10 text-warning", href: "/historial" },
-]
+interface QuickActionsProps {
+  cuentas?: CuentaCorriente[]
+}
 
-export function QuickActions() {
+export function QuickActions({ cuentas = [] }: QuickActionsProps) {
+  const [showTransactionForm, setShowTransactionForm] = useState(false)
+  const [showAccountForm, setShowAccountForm] = useState(false)
+
   return (
-    <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
-      {actions.map((action) => (
-        <Link
-          key={action.label}
-          href={action.href}
-          className="flex h-auto flex-col items-center gap-2 rounded-xl bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
+    <>
+      <div className="flex gap-2 sm:gap-3">
+        <Button
+          onClick={() => setShowTransactionForm(true)}
+          className="flex-1 h-10 sm:h-12 gap-1.5 sm:gap-2 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs sm:text-sm"
         >
-          <div className={`flex h-12 w-12 items-center justify-center rounded-full ${action.color}`}>
-            <action.icon className="h-5 w-5" />
-          </div>
-          <span className="text-xs font-medium text-foreground">{action.label}</span>
-        </Link>
-      ))}
-    </div>
+          <Plus className="h-4 w-4 sm:h-5 sm:w-5" />
+          Nueva transaccion
+        </Button>
+        <Button
+          onClick={() => setShowAccountForm(true)}
+          variant="outline"
+          className="flex-1 h-10 sm:h-12 gap-1.5 sm:gap-2 border-primary/20 hover:bg-primary/5 font-semibold text-xs sm:text-sm"
+        >
+          <Building2 className="h-4 w-4 sm:h-5 sm:w-5" />
+          Agregar cuenta
+        </Button>
+      </div>
+
+      <NewTransactionForm
+        open={showTransactionForm}
+        onOpenChange={setShowTransactionForm}
+        cuentas={cuentas}
+      />
+      <NewAccountForm
+        open={showAccountForm}
+        onOpenChange={setShowAccountForm}
+      />
+    </>
   )
 }

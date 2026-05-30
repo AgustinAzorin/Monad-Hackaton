@@ -67,3 +67,28 @@ export interface FacturaEscaneada {
   // Path del PDF ya almacenado en el bucket 'facturas' (para adjuntar a la transacción)
   url_factura: string | null;
 }
+
+// ─── OCR de hojas físicas → Factura generada ───
+
+export interface ConceptoFactura {
+  descripcion: string;
+  monto: number | null;
+}
+
+export interface DatosFacturaOcr {
+  monto_total: number | null;
+  conceptos: ConceptoFactura[];
+  observaciones: string;
+  confianza: 'alta' | 'media' | 'baja';
+}
+
+export interface FacturaOcrGenerada {
+  // Transacción registrada como PENDIENTE en la cuenta corriente.
+  transaccion: Transaccion;
+  // URL firmada y temporal del PDF de la factura generada.
+  factura_url: string | null;
+  // Datos estructurados que se extrajeron de la imagen por OCR.
+  datos_extraidos: DatosFacturaOcr;
+  // Texto plano completo que devolvió Tesseract (recortado).
+  texto_crudo: string;
+}

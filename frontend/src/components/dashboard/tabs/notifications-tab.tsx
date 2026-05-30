@@ -1,7 +1,9 @@
 "use client"
 
+import { useMemo, useState } from "react"
 import { AlertTriangle, Clock, Info, BellOff } from "lucide-react"
 import { Card } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import type { CuentaCorriente, TransaccionConDetalle } from "@/types/cuenta"
 
 interface NotificationsTabProps {
@@ -33,6 +35,8 @@ function relativeTime(dateStr: string): string {
 }
 
 export function NotificationsTab({ transacciones, cuentas }: NotificationsTabProps) {
+  const [allRead, setAllRead] = useState(false)
+
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("es-AR", {
       style: "currency",
@@ -40,37 +44,41 @@ export function NotificationsTab({ transacciones, cuentas }: NotificationsTabPro
       minimumFractionDigits: 0,
     }).format(Math.abs(amount))
 
-  const alertas: Alerta[] = []
+  const alertas: Alerta[] = useMemo(() => {
+    const result: Alerta[] = []
 
-  transacciones
-    .filter((tx) => tx.estado === "PENDIENTE")
-    .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
-    .slice(0, 6)
-    .forEach((tx) => {
-      const nombre = tx.contraparte?.nombre || tx.contraparte?.email || "un contacto"
-      const esFactura = tx.tipo === "FACTURA"
-      alertas.push({
-        id: tx.id,
-        title: esFactura ? "Factura pendiente" : "Pago pendiente",
-        message: `${esFactura ? "Factura" : "Pago"} de ${formatCurrency(tx.monto)} con ${nombre} sin completar`,
-        type: esFactura ? "warning" : "reminder",
-        time: relativeTime(tx.created_at),
+    transacciones
+      .filter((tx) => tx.estado === "PENDIENTE")
+      .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+      .slice(0, 6)
+      .forEach((tx) => {
+        const nombre = tx.contraparte?.nombre || tx.contraparte?.email || "un contacto"
+        const esFactura = tx.tipo === "FACTURA"
+        result.push({
+          id: tx.id,
+          title: esFactura ? "Factura pendiente" : "Pago pendiente",
+          message: `${esFactura ? "Factura" : "Pago"} de ${formatCurrency(tx.monto)} con ${nombre} sin completar`,
+          type: esFactura ? "warning" : "reminder",
+          time: relativeTime(tx.created_at),
+        })
       })
-    })
 
-  cuentas
-    .filter((c) => c.saldo_relativo < 0)
-    .slice(0, 3)
-    .forEach((c) => {
-      const nombre = c.contraparte?.nombre || c.contraparte?.email || "un contacto"
-      alertas.push({
-        id: `saldo-${c.id}`,
-        title: "Saldo en contra",
-        message: `Le debés ${formatCurrency(c.saldo_relativo)} a ${nombre}`,
-        type: "info",
-        time: relativeTime(c.updated_at),
+    cuentas
+      .filter((c) => c.saldo_relativo < 0)
+      .slice(0, 3)
+      .forEach((c) => {
+        const nombre = c.contraparte?.nombre || c.contraparte?.email || "un contacto"
+        result.push({
+          id: `saldo-${c.id}`,
+          title: "Saldo en contra",
+          message: `Le debés ${formatCurrency(c.saldo_relativo)} a ${nombre}`,
+          type: "info",
+          time: relativeTime(c.updated_at),
+        })
       })
-    })
+
+    return result
+  }, [transacciones, cuentas])
 
   if (alertas.length === 0) {
     return (
@@ -83,14 +91,24 @@ export function NotificationsTab({ transacciones, cuentas }: NotificationsTabPro
 
   return (
     <div className="space-y-3">
-      <h3 className="font-medium text-muted-foreground">Alertas recientes</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium text-muted-foreground">Alertas recientes</h3>
+        {!allRead && (
+          <Button variant="ghost" size="sm" className="text-primary" onClick={() => setAllRead(true)}>
+            Marcar todas como leídas
+          </Button>
+        )}
+      </div>
 
       {alertas.map((n) => {
         const config = typeConfig[n.type]
         const Icon = config.icon
 
         return (
-          <Card key={n.id} className="gap-0 p-4">
+          <Card
+            key={n.id}
+            className={`gap-0 p-4 transition-colors ${!allRead ? "bg-primary/5 border-primary/20" : ""}`}
+          >
             <div className="flex gap-4">
               <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${config.bg}`}>
                 <Icon className={`h-5 w-5 ${config.color}`} />
@@ -98,7 +116,10 @@ export function NotificationsTab({ transacciones, cuentas }: NotificationsTabPro
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <h4 className="font-medium">{n.title}</h4>
+                    <h4 className="font-medium flex items-center gap-2">
+                      {n.title}
+                      {!allRead && <span className="h-2 w-2 rounded-full bg-primary" />}
+                    </h4>
                     <p className="mt-1 text-sm text-muted-foreground">{n.message}</p>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">{n.time}</span>

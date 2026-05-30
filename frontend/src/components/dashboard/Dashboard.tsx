@@ -61,24 +61,28 @@ export function Dashboard() {
     fetchData()
   }, [fetchData])
 
-  const { balance, owes, owed, txCountByCuenta } = useMemo(() => {
+  const { owes, owed, debtors, creditors } = useMemo(() => {
     let owesTotal = 0
     let owedTotal = 0
+    const debtorList: { id: string; name: string; amount: number }[] = []
+    const creditorList: { id: string; name: string; amount: number }[] = []
     for (const c of cuentas) {
-      if (c.saldo_relativo > 0) owedTotal += c.saldo_relativo
-      else if (c.saldo_relativo < 0) owesTotal += Math.abs(c.saldo_relativo)
-    }
-    const count: Record<string, number> = {}
-    for (const tx of transacciones) {
-      count[tx.cuenta_corriente_id] = (count[tx.cuenta_corriente_id] ?? 0) + 1
+      const name = c.contraparte?.nombre || c.contraparte?.email || "Contacto"
+      if (c.saldo_relativo > 0) {
+        owedTotal += c.saldo_relativo
+        creditorList.push({ id: c.id, name, amount: c.saldo_relativo })
+      } else if (c.saldo_relativo < 0) {
+        owesTotal += Math.abs(c.saldo_relativo)
+        debtorList.push({ id: c.id, name, amount: Math.abs(c.saldo_relativo) })
+      }
     }
     return {
-      balance: owedTotal - owesTotal,
       owes: owesTotal,
       owed: owedTotal,
-      txCountByCuenta: count,
+      debtors: debtorList,
+      creditors: creditorList,
     }
-  }, [cuentas, transacciones])
+  }, [cuentas])
 
   const pendientes = useMemo(
     () => transacciones.filter((t) => t.estado === "PENDIENTE").length,
@@ -103,7 +107,7 @@ export function Dashboard() {
     <div className="min-h-screen bg-background text-foreground">
       <DashboardHeader alerts={pendientes} />
 
-      <main className="mx-auto max-w-4xl px-4 py-6 pb-28">
+      <main className="mx-auto max-w-4xl px-4 py-6">
         {loading ? (
           <div className="flex min-h-[60vh] items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -115,19 +119,15 @@ export function Dashboard() {
         ) : (
           <div className="space-y-6">
             <section>
-              <BalanceCard balance={balance} owes={owes} owed={owed} />
+              <BalanceCard owes={owes} owed={owed} debtors={debtors} creditors={creditors} />
             </section>
 
             <section>
-              <QuickActions />
+              <QuickActions cuentas={cuentas} />
             </section>
 
             <section>
-              <NavigationTabs
-                cuentas={cuentas}
-                transacciones={transacciones}
-                txCountByCuenta={txCountByCuenta}
-              />
+              <NavigationTabs cuentas={cuentas} transacciones={transacciones} />
             </section>
           </div>
         )}
