@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* ─── Design tokens (PANTALLA INICIO / fintech theme) ───
    El home (/) usa estos tokens vía utilidades semánticas (bg-card,
