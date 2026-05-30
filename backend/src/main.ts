@@ -14,8 +14,10 @@ async function bootstrap() {
     credentials: true,
   });
 
-  const port = configService.get<number>('BACKEND_PORT', 3001);
-  await app.listen(port);
+  const port =
+    configService.get<number>('PORT') ??
+    configService.get<number>('BACKEND_PORT', 3001);
+  await app.listen(port, '0.0.0.0');
   console.log(`Server running on port ${port}`);
 }
 bootstrap();

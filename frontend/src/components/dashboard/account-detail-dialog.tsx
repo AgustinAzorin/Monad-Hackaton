@@ -10,6 +10,7 @@ import {
   CreditCard,
   FileUp,
   Upload,
+  Camera,
   CheckCircle2,
   AlertCircle,
   Clock,
@@ -1257,19 +1258,62 @@ export function AccountDetailDialog({
 
             {!facturaResult && (
               <div className="space-y-4">
-                <label className="flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed border-border p-8 transition hover:border-primary/50 hover:bg-muted/30">
-                  <Upload className="h-10 w-10 text-muted-foreground" />
-                  <div className="text-center">
-                    <p className="text-sm font-medium">{facturaFile ? facturaFile.name : "Seleccionar archivo"}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">PDF (máx. 10MB)</p>
+                {facturaFile ? (
+                  <div className="flex flex-col items-center gap-3 rounded-xl border border-border p-4">
+                    {facturaFile.type.startsWith("image/") ? (
+                      <img
+                        src={URL.createObjectURL(facturaFile)}
+                        alt="Vista previa de la factura"
+                        className="max-h-56 w-full rounded-lg object-contain"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 py-4">
+                        <FileUp className="h-10 w-10 text-muted-foreground" />
+                        <p className="text-sm font-medium">{facturaFile.name}</p>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setFacturaFile(null)}
+                      className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    >
+                      Quitar y elegir otro
+                    </button>
                   </div>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    className="hidden"
-                    onChange={(e) => setFacturaFile(e.target.files?.[0] ?? null)}
-                  />
-                </label>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border p-6 transition hover:border-primary/50 hover:bg-muted/30">
+                      <Upload className="h-8 w-8 text-muted-foreground" />
+                      <div className="text-center">
+                        <p className="text-sm font-medium">Subir archivo</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">PDF o imagen</p>
+                      </div>
+                      <input
+                        type="file"
+                        accept=".pdf,image/*"
+                        className="hidden"
+                        onChange={(e) => setFacturaFile(e.target.files?.[0] ?? null)}
+                      />
+                    </label>
+
+                    <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border p-6 transition hover:border-primary/50 hover:bg-muted/30">
+                      <Camera className="h-8 w-8 text-muted-foreground" />
+                      <div className="text-center">
+                        <p className="text-sm font-medium">Sacar foto</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">Generar desde la cámara</p>
+                      </div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => setFacturaFile(e.target.files?.[0] ?? null)}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <p className="text-center text-xs text-muted-foreground">Máx. 10MB</p>
 
                 <Button onClick={handleEscanearFactura} disabled={!facturaFile || escaneando} className="w-full">
                   {escaneando ? (

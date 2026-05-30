@@ -38,6 +38,17 @@ import {
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const Tesseract = require('tesseract.js');
+
+const IMAGE_MIMETYPES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
 
 const FACTURAS_BUCKET = 'facturas';
 const FACTURA_URL_TTL_SECONDS = 60 * 60; // 1 hora
@@ -684,29 +695,36 @@ export class CuentaCorrienteService {
     file: Express.Multer.File,
   ): Promise<FacturaEscaneada> {
     let textoExtraido = '';
+    let extension = 'pdf';
+    let contentType = 'application/pdf';
 
     if (file.mimetype === 'application/pdf') {
       const parsed = await pdfParse(file.buffer);
       textoExtraido = parsed.text;
+    } else if (IMAGE_MIMETYPES.includes(file.mimetype)) {
+      // Foto de la factura → OCR con Tesseract (español) para extraer el texto.
+      textoExtraido = await this.ocrImagen(file.buffer);
+      extension = file.mimetype.split('/')[1] ?? 'jpg';
+      contentType = file.mimetype;
     } else {
       throw new BadRequestException(
-        'Formato no soportado. Subí un archivo PDF.',
+        'Formato no soportado. Subí un PDF o una foto (JPG/PNG/WEBP).',
       );
     }
 
     const montoTotal = this.extraerMontoTotal(textoExtraido);
 
-    // sha256 de los bytes del PDF — prueba de integridad que se ancla on-chain (#4)
+    // sha256 de los bytes del archivo — prueba de integridad que se ancla on-chain (#4)
     const facturaHash =
       '0x' + createHash('sha256').update(file.buffer).digest('hex');
 
-    // Guardamos el PDF en el bucket privado para poder verlo luego desde el historial.
+    // Guardamos el archivo en el bucket privado para poder verlo luego desde el historial.
     const supabase = this.supabaseService.getClient();
-    const path = `${cuentaId}/${randomUUID()}.pdf`;
+    const path = `${cuentaId}/${randomUUID()}.${extension}`;
     const { error: uploadError } = await supabase.storage
       .from(FACTURAS_BUCKET)
       .upload(path, file.buffer, {
-        contentType: 'application/pdf',
+        contentType,
         upsert: false,
       });
 
@@ -717,6 +735,17 @@ export class CuentaCorrienteService {
       url_factura: uploadError ? null : path,
       factura_hash: facturaHash,
     };
+  }
+
+  // OCR de una imagen (foto de la factura) → texto plano.
+  private async ocrImagen(buffer: Buffer): Promise<string> {
+    try {
+      const { data } = await Tesseract.recognize(buffer, 'spa');
+      return (data?.text as string) ?? '';
+    } catch (err) {
+      this.logger.error(`OCR de imagen falló: ${String(err)}`);
+      return '';
+    }
   }
 
   private extraerMontoTotal(texto: string): number | null {
