@@ -10,13 +10,10 @@ export interface CuentaCorriente {
   usuario_a_id: string;
   usuario_b_id: string;
   saldo: number;
+  saldo_relativo: number;
   created_at: string;
   updated_at: string;
-}
-
-export interface CuentaCorrienteConPerfil extends CuentaCorriente {
   contraparte: Profile;
-  saldo_relativo: number;
 }
 
 export interface Transaccion {
@@ -44,6 +41,14 @@ export interface MensajeChat {
   created_at: string;
 }
 
+export interface MensajeDescifrado {
+  id: string;
+  remitente_id: string;
+  texto: string;
+  created_at: string;
+  descifrando?: boolean;
+}
+
 export interface ClavePublica {
   id: string;
   cuenta_corriente_id: string;
@@ -56,4 +61,11 @@ export interface FacturaEscaneada {
   monto_total: number | null;
   texto_extraido: string;
   confianza: 'alta' | 'media' | 'baja';
+}
+
+export interface MercadoPagoResult {
+  status: string;
+  status_detail: string;
+  payment_id: string;
+  transaccion_id: string;
 }

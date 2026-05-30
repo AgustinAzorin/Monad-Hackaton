@@ -6,6 +6,7 @@ import { GatewayModule } from './gateway/gateway.module';
 import { SupabaseModule } from './config/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { CuentaCorrienteModule } from './cuenta-corriente/cuenta-corriente.module';
+import { WebhookModule } from './webhook/webhook.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { CuentaCorrienteModule } from './cuenta-corriente/cuenta-corriente.modul
     SupabaseModule,
     AuthModule,
     CuentaCorrienteModule,
+    WebhookModule,
   ],
   controllers: [AppController],
   providers: [AppService],
