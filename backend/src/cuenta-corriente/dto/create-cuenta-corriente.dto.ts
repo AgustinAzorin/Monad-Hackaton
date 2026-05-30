@@ -1,6 +1,7 @@
-import { IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 
 export class CreateCuentaCorrienteDto {
-  @IsUUID()
-  contraparte_id: string;
+  @IsString()
+  @IsNotEmpty()
+  searchQuery: string;
 }

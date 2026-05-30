@@ -7,6 +7,8 @@ import {
   Req,
   UseGuards,
   ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { CuentaCorrienteService } from './cuenta-corriente.service';
 import { CreateCuentaCorrienteDto } from './dto/create-cuenta-corriente.dto';
@@ -28,6 +30,7 @@ export class CuentaCorrienteController {
   }
 
   @Post()
+  @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateCuentaCorrienteDto, @Req() req: any) {
     return this.service.create(req.user.id, dto);
   }
