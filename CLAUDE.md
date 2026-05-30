@@ -14,21 +14,27 @@ Monorepo with two independent deployable services:
 - **Database & Auth:** Supabase (Postgres + Row Level Security + Auth)
 - **Blockchain:** Monad (EVM-compatible, chain ID 10143 testnet / 143 mainnet)
 
+## Package Manager
+This project uses **pnpm** with workspaces. Do NOT use npm or yarn.
+
 ## Development Commands
 ```bash
 # From root — run both services
-npm run dev
+pnpm dev
 
 # Individual services
-npm run dev:frontend    # Next.js on :3000
-npm run dev:backend     # NestJS on :3001
+pnpm dev:frontend    # Next.js on :3000
+pnpm dev:backend     # NestJS on :3001
 
 # Build
-npm run build:frontend
-npm run build:backend
+pnpm build:frontend
+pnpm build:backend
 
 # Lint
-npm run lint
+pnpm lint
+
+# Install dependencies
+pnpm install
 ```
 
 ## Key Conventions
@@ -53,13 +59,13 @@ Each service deploys independently on Render pointing to this single repo:
 
 ### Frontend (Static Site or Web Service)
 - Root Directory: `frontend`
-- Build Command: `npm install && npm run build`
-- Start Command: `npm run start`
+- Build Command: `pnpm install && pnpm build`
+- Start Command: `pnpm start`
 - Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_BACKEND_URL`, `NEXT_PUBLIC_WS_URL`
 
 ### Backend (Web Service)
 - Root Directory: `backend`
-- Build Command: `npm install && npm run build`
+- Build Command: `pnpm install && pnpm build`
 - Start Command: `node dist/main`
 - Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BACKEND_PORT`, `CORS_ORIGIN`, `MONAD_RPC_URL`, `PRIVATE_KEY`
 

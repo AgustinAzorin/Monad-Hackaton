@@ -23,8 +23,13 @@ out/
 .DS_Store
 Thumbs.db
 
+# Lock files (only pnpm-lock.yaml is committed)
+package-lock.json
+yarn.lock
+
 # Debug
 npm-debug.log*
+pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
