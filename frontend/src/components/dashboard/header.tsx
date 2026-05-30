@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { Bell, Menu, Settings, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -29,9 +30,14 @@ export function DashboardHeader({ userName, alerts = 0 }: DashboardHeaderProps) 
             <Menu className="h-5 w-5" />
           </Button>
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold">
-              F
-            </div>
+            <Image
+              src="/logo.png"
+              alt="FinanzaPro"
+              width={36}
+              height={36}
+              priority
+              className="h-9 w-9 rounded-lg object-cover"
+            />
             <span className="hidden font-semibold sm:inline">FinanzaPro</span>
           </div>
         </div>

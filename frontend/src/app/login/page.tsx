@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
@@ -56,6 +57,14 @@ export default function LoginPage() {
         onSubmit={handleSubmit}
         className="w-full max-w-md space-y-5 rounded-2xl border border-white/10 bg-white/5 p-8 shadow-xl backdrop-blur"
       >
+        <Image
+          src="/logo.png"
+          alt="FinanzaPro"
+          width={64}
+          height={64}
+          priority
+          className="mx-auto h-16 w-16 rounded-xl object-cover"
+        />
         <h1 className="text-center text-2xl font-bold tracking-tight">Iniciar sesion</h1>
 
         {error && (
