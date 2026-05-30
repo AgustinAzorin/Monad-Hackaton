@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3001';
@@ -56,6 +57,7 @@ function saldoBg(saldo: number): string {
 }
 
 export default function CuentasPage() {
+  const router = useRouter();
   const [cuentas, setCuentas] = useState<CuentaCorriente[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -228,7 +230,8 @@ export default function CuentasPage() {
             {cuentas.map((cuenta) => (
               <div
                 key={cuenta.id}
-                className="rounded-xl border border-white/10 bg-white/5 p-4 transition hover:border-white/20"
+                onClick={() => router.push(`/cuentas/${cuenta.id}`)}
+                className="cursor-pointer rounded-xl border border-white/10 bg-white/5 p-4 transition hover:border-white/20"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">

@@ -2,16 +2,26 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Param,
   Body,
   Req,
   UseGuards,
+  UseInterceptors,
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CuentaCorrienteService } from './cuenta-corriente.service';
 import { CreateCuentaCorrienteDto } from './dto/create-cuenta-corriente.dto';
+import {
+  CreateTransaccionDto,
+  CreatePagoMercadoPagoDto,
+  CreateMensajeDto,
+  UpsertClavePublicaDto,
+} from './dto/create-transaccion.dto';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 
 @Controller('cuentas-corrientes')
@@ -33,5 +43,91 @@ export class CuentaCorrienteController {
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateCuentaCorrienteDto, @Req() req: any) {
     return this.service.create(req.user.id, dto);
+  }
+
+  // ─── Transacciones ───
+
+  @Get(':id/transacciones')
+  listarTransacciones(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: any,
+  ) {
+    return this.service.listarTransacciones(id, req.user.id);
+  }
+
+  @Post(':id/transaccion')
+  @HttpCode(HttpStatus.CREATED)
+  crearTransaccion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateTransaccionDto,
+    @Req() req: any,
+  ) {
+    return this.service.crearTransaccion(id, req.user.id, dto);
+  }
+
+  // ─── Mercado Pago ───
+
+  @Post(':id/mercado-pago')
+  @HttpCode(HttpStatus.CREATED)
+  crearPagoMercadoPago(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreatePagoMercadoPagoDto,
+    @Req() req: any,
+  ) {
+    return this.service.crearPreferenciaMercadoPago(id, req.user.id, dto);
+  }
+
+  // ─── Escaneo de Facturas ───
+
+  @Post(':id/escanear-factura')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('factura', {
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  async escanearFactura(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: any,
+  ) {
+    await this.service.findOne(id, req.user.id);
+    return this.service.escanearFactura(file);
+  }
+
+  // ─── Chat (E2EE) ───
+
+  @Get(':id/mensajes')
+  listarMensajes(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    return this.service.listarMensajes(id, req.user.id);
+  }
+
+  @Post(':id/mensajes')
+  @HttpCode(HttpStatus.CREATED)
+  guardarMensaje(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateMensajeDto,
+    @Req() req: any,
+  ) {
+    return this.service.guardarMensaje(id, req.user.id, dto);
+  }
+
+  // ─── Claves Públicas (E2EE) ───
+
+  @Get(':id/claves-publicas')
+  obtenerClavesPublicas(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: any,
+  ) {
+    return this.service.obtenerClavesPublicas(id, req.user.id);
+  }
+
+  @Put(':id/clave-publica')
+  upsertClavePublica(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpsertClavePublicaDto,
+    @Req() req: any,
+  ) {
+    return this.service.upsertClavePublica(id, req.user.id, dto);
   }
 }
