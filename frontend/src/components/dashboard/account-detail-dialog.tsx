@@ -16,10 +16,19 @@ import {
   Loader2,
   TrendingUp,
   TrendingDown,
+  Plus,
+  RotateCcw,
+  DollarSign,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import {
   generateKeyPair,
@@ -129,6 +138,12 @@ export function AccountDetailDialog({
   const [chatReady, setChatReady] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
+  // Panel de solicitud dentro del chat (reembolso / cobro)
+  const [requestMode, setRequestMode] = useState<"reembolso" | "cobro" | null>(null)
+  const [requestAmount, setRequestAmount] = useState("")
+  const [requestReason, setRequestReason] = useState("")
+  const [sendingRequest, setSendingRequest] = useState(false)
+
   // Modal pago
   const [showPagoModal, setShowPagoModal] = useState(false)
   const [pagoMonto, setPagoMonto] = useState("")
@@ -154,6 +169,9 @@ export function AccountDetailDialog({
       setMensajes([])
       setSharedKey(null)
       setChatReady(false)
+      setRequestMode(null)
+      setRequestAmount("")
+      setRequestReason("")
     }
   }, [open, cuentaId, initialTab])
 
@@ -312,6 +330,57 @@ export function AccountDetailDialog({
       // silent
     } finally {
       setSendingChat(false)
+    }
+  }
+
+  // ─── Abrir modales desde el menú del chat ───
+  function abrirPago() {
+    setPagoMonto("")
+    setPagoDesc("")
+    setPagoStep("monto")
+    setPagoError(null)
+    setPagoResultado(null)
+    setShowPagoModal(true)
+  }
+
+  function abrirFactura() {
+    setFacturaFile(null)
+    setFacturaResult(null)
+    setFacturaMontoConfirmado("")
+    setShowFacturaModal(true)
+  }
+
+  function abrirSolicitud(mode: "reembolso" | "cobro") {
+    setRequestMode(mode)
+    setRequestAmount("")
+    setRequestReason("")
+  }
+
+  // ─── Enviar solicitud (reembolso / cobro) como mensaje cifrado ───
+  async function handleSendRequest(e: FormEvent) {
+    e.preventDefault()
+    if (!requestAmount || !sharedKey || !requestMode) return
+    setSendingRequest(true)
+    try {
+      const label =
+        requestMode === "reembolso" ? "Solicitud de reembolso" : "Solicitud de pago"
+      const monto = formatSaldo(parseFloat(requestAmount))
+      const motivo = requestReason.trim() ? ` — Motivo: ${requestReason.trim()}` : ""
+      const texto = `${label}: ${monto}${motivo}`
+
+      const { ciphertext, iv } = await encryptMessage(sharedKey, texto)
+      await apiFetch(`/cuentas-corrientes/${cuentaId}/mensajes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texto_encriptado: ciphertext, iv }),
+      })
+      setRequestMode(null)
+      setRequestAmount("")
+      setRequestReason("")
+    } catch {
+      // silent
+    } finally {
+      setSendingRequest(false)
     }
   }
 
@@ -610,91 +679,168 @@ export function AccountDetailDialog({
               <span className="text-xs font-medium text-success">Encriptado de extremo a extremo</span>
             </div>
 
-            {!chatReady ? (
-              <div className="py-12 text-center">
-                <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">Estableciendo canal seguro...</p>
-                <p className="mt-1 text-xs text-muted-foreground/70">
-                  Se necesita que ambos usuarios abran el chat al menos una vez.
+            {/* Mensajes */}
+            <div className="mb-3 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-xl border border-border bg-muted/20 p-3">
+              {!chatReady ? (
+                <div className="py-12 text-center">
+                  <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">Estableciendo canal seguro...</p>
+                  <p className="mt-1 text-xs text-muted-foreground/70">
+                    Se necesita que ambos usuarios abran el chat al menos una vez.
+                  </p>
+                </div>
+              ) : mensajes.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  No hay mensajes aún. Iniciá la conversación.
                 </p>
-              </div>
-            ) : (
-              <>
-                <div className="mb-3 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-xl border border-border bg-muted/20 p-3">
-                  {mensajes.length === 0 && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      No hay mensajes aún. Iniciá la conversación.
-                    </p>
-                  )}
-                  {mensajes.map((m) => {
-                    const esMio = m.remitente_id === userId
-                    return (
-                      <div key={m.id} className={`flex ${esMio ? "justify-end" : "justify-start"}`}>
-                        <div
-                          className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
-                            esMio
-                              ? "rounded-br-md bg-primary text-primary-foreground"
-                              : "rounded-bl-md bg-muted text-foreground"
+              ) : (
+                mensajes.map((m) => {
+                  const esMio = m.remitente_id === userId
+                  const esReembolso = m.texto.startsWith("Solicitud de reembolso")
+                  const esCobro = m.texto.startsWith("Solicitud de pago")
+                  const esSolicitud = esReembolso || esCobro
+                  return (
+                    <div key={m.id} className={`flex ${esMio ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
+                          esSolicitud
+                            ? "border border-amber-500/30 bg-amber-500/10 text-foreground"
+                            : esMio
+                            ? "rounded-br-md bg-primary text-primary-foreground"
+                            : "rounded-bl-md bg-muted text-foreground"
+                        }`}
+                      >
+                        {esSolicitud && (
+                          <div className="mb-1 flex items-center gap-1">
+                            {esReembolso ? (
+                              <RotateCcw className="h-3 w-3 text-amber-600" />
+                            ) : (
+                              <DollarSign className="h-3 w-3 text-amber-600" />
+                            )}
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                              {esReembolso ? "Reembolso" : "Solicitud de pago"}
+                            </span>
+                          </div>
+                        )}
+                        <p className="text-sm leading-relaxed">{m.texto}</p>
+                        <p
+                          className={`mt-1 text-[10px] ${
+                            esSolicitud
+                              ? "text-muted-foreground"
+                              : esMio
+                              ? "text-primary-foreground/60"
+                              : "text-muted-foreground"
                           }`}
                         >
-                          <p className="text-sm leading-relaxed">{m.texto}</p>
-                          <p className={`mt-1 text-[10px] ${esMio ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
-                            {new Date(m.created_at).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}
-                          </p>
-                        </div>
+                          {new Date(m.created_at).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}
+                        </p>
                       </div>
-                    )
-                  })}
-                  <div ref={chatEndRef} />
-                </div>
+                    </div>
+                  )
+                })
+              )}
+              <div ref={chatEndRef} />
+            </div>
 
-                <form onSubmit={handleSendChat} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Escribí un mensaje..."
-                    className="flex-1 rounded-xl border border-border bg-card px-4 py-3 text-sm outline-none transition focus:border-primary"
-                  />
-                  <Button type="submit" size="icon" disabled={sendingChat || !chatInput.trim()} className="h-auto rounded-xl px-4">
-                    <Send className="h-5 w-5" />
+            {/* Panel de solicitud (reembolso / cobro) */}
+            {requestMode && (
+              <form onSubmit={handleSendRequest} className="mb-3 space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
+                    {requestMode === "reembolso" ? (
+                      <RotateCcw className="h-4 w-4 text-amber-600" />
+                    ) : (
+                      <DollarSign className="h-4 w-4 text-amber-600" />
+                    )}
+                    {requestMode === "reembolso" ? "Solicitar reembolso" : "Solicitar pago"}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={() => setRequestMode(null)}
+                  >
+                    <X className="h-4 w-4" />
                   </Button>
-                </form>
-              </>
+                </div>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  value={requestAmount}
+                  onChange={(e) => setRequestAmount(e.target.value)}
+                  placeholder="Monto (ARS)"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                <input
+                  type="text"
+                  value={requestReason}
+                  onChange={(e) => setRequestReason(e.target.value)}
+                  placeholder="Motivo (opcional)"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                <Button type="submit" className="w-full" size="sm" disabled={sendingRequest || !requestAmount}>
+                  {sendingRequest ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="mr-2 h-4 w-4" />
+                  )}
+                  Enviar solicitud
+                </Button>
+              </form>
             )}
+
+            {/* Fila de entrada: menú de acciones + mensaje */}
+            <div className="flex gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" className="h-auto shrink-0 rounded-xl px-3">
+                    <Plus className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" side="top">
+                  <DropdownMenuItem onClick={abrirPago}>
+                    <CreditCard className="mr-2 h-4 w-4" />
+                    Realizar pago
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={abrirFactura}>
+                    <FileUp className="mr-2 h-4 w-4" />
+                    Subir factura
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={!chatReady} onClick={() => abrirSolicitud("reembolso")}>
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Solicitar reembolso
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={!chatReady} onClick={() => abrirSolicitud("cobro")}>
+                    <DollarSign className="mr-2 h-4 w-4" />
+                    Solicitar pago
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <form onSubmit={handleSendChat} className="flex flex-1 gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder={chatReady ? "Escribí un mensaje..." : "Estableciendo canal seguro..."}
+                  disabled={!chatReady}
+                  className="flex-1 rounded-xl border border-border bg-card px-4 py-3 text-sm outline-none transition focus:border-primary disabled:opacity-60"
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  disabled={sendingChat || !chatInput.trim() || !chatReady}
+                  className="h-auto rounded-xl px-4"
+                >
+                  <Send className="h-5 w-5" />
+                </Button>
+              </form>
+            </div>
           </TabsContent>
         </Tabs>
-
-        {/* Bottom actions */}
-        <div className="flex items-center gap-3 border-t border-border bg-card/50 p-4">
-          <Button
-            className="flex-1"
-            onClick={() => {
-              setPagoMonto("")
-              setPagoDesc("")
-              setPagoStep("monto")
-              setPagoError(null)
-              setPagoResultado(null)
-              setShowPagoModal(true)
-            }}
-          >
-            <CreditCard className="mr-2 h-4 w-4" />
-            Realizar pago
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={() => {
-              setFacturaFile(null)
-              setFacturaResult(null)
-              setFacturaMontoConfirmado("")
-              setShowFacturaModal(true)
-            }}
-          >
-            <FileUp className="mr-2 h-4 w-4" />
-            Subir factura
-          </Button>
-        </div>
       </div>
 
       {/* ─── Modal: Realizar Pago ─── */}

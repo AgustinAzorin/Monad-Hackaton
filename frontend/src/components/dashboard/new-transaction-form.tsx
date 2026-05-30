@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Upload, Plus, Trash2, FileText, Receipt, Package, CreditCard } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Upload, Plus, Trash2, FileText, Receipt, Package, CreditCard, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,7 +20,8 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Card } from "@/components/ui/card"
-import type { CuentaCorriente } from "@/types/cuenta"
+import { apiFetch } from "@/lib/api"
+import type { CuentaCorriente, Categoria, MetodoPago, Transaccion } from "@/types/cuenta"
 
 interface Document {
   id: string
@@ -33,6 +34,7 @@ interface NewTransactionFormProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   cuentas?: CuentaCorriente[]
+  onSaved?: () => void
 }
 
 const documentTypes = [
@@ -43,29 +45,44 @@ const documentTypes = [
   { value: "otro", label: "Otro", icon: FileText },
 ]
 
-const categories = [
-  "Proveedores",
-  "Ventas",
-  "Logistica",
-  "Servicios",
-  "Compras",
-  "Sueldos",
-  "Impuestos",
-  "Otros",
-]
-
-const paymentMethods = [
-  "Transferencia bancaria",
-  "Deposito bancario",
-  "Efectivo",
-  "Cheque",
-  "Debito automatico",
-  "Tarjeta de credito",
-  "Mercado Pago",
-]
-
-export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTransactionFormProps) {
+export function NewTransactionForm({ open, onOpenChange, cuentas = [], onSaved }: NewTransactionFormProps) {
   const [documents, setDocuments] = useState<Document[]>([])
+
+  // Catálogos desde el backend
+  const [categories, setCategories] = useState<Categoria[]>([])
+  const [paymentMethods, setPaymentMethods] = useState<MetodoPago[]>([])
+
+  // Campos del formulario
+  const [cuentaId, setCuentaId] = useState("")
+  const [monto, setMonto] = useState("")
+  const [tipo, setTipo] = useState<"FACTURA" | "PAGO">("FACTURA")
+  const [categoriaSlug, setCategoriaSlug] = useState("")
+  const [metodoSlug, setMetodoSlug] = useState("")
+  const [notas, setNotas] = useState("")
+
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Cargamos los catálogos la primera vez que se abre el diálogo.
+  useEffect(() => {
+    if (!open) return
+    if (categories.length === 0) {
+      apiFetch<Categoria[]>("/categories").then(setCategories).catch(() => {})
+    }
+    if (paymentMethods.length === 0) {
+      apiFetch<MetodoPago[]>("/payment-methods").then(setPaymentMethods).catch(() => {})
+    }
+  }, [open, categories.length, paymentMethods.length])
+
+  const resetForm = () => {
+    setCuentaId("")
+    setMonto("")
+    setTipo("FACTURA")
+    setCategoriaSlug("")
+    setMetodoSlug("")
+    setNotas("")
+    setDocuments([])
+  }
 
   const addDocument = () => {
     setDocuments([
@@ -84,9 +101,42 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
     )
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    onOpenChange(false)
+    setError(null)
+
+    const cuenta = cuentas.find((c) => c.id === cuentaId)
+    if (!cuenta) {
+      setError("Seleccioná una cuenta.")
+      return
+    }
+    const montoNum = Number(monto)
+    if (!montoNum || montoNum <= 0) {
+      setError("Ingresá un monto válido.")
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      await apiFetch<Transaccion>(`/cuentas-corrientes/${cuenta.id}/transaccion`, {
+        method: "POST",
+        body: JSON.stringify({
+          monto: montoNum,
+          tipo,
+          receptor_id: cuenta.contraparte.id,
+          descripcion: notas.trim() || undefined,
+          categoria_slug: categoriaSlug || undefined,
+          metodo_pago_slug: metodoSlug || undefined,
+        }),
+      })
+      resetForm()
+      onSaved?.()
+      onOpenChange(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar la transacción.")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -100,7 +150,7 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
           {/* Account Selection */}
           <div className="space-y-1.5 sm:space-y-2">
             <Label htmlFor="account" className="text-xs sm:text-sm">Cuenta</Label>
-            <Select>
+            <Select value={cuentaId} onValueChange={setCuentaId}>
               <SelectTrigger id="account" className="h-9 sm:h-10 text-sm">
                 <SelectValue placeholder="Seleccionar cuenta" />
               </SelectTrigger>
@@ -120,6 +170,20 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
             </Select>
           </div>
 
+          {/* Type */}
+          <div className="space-y-1.5 sm:space-y-2">
+            <Label htmlFor="tipo" className="text-xs sm:text-sm">Tipo</Label>
+            <Select value={tipo} onValueChange={(v) => setTipo(v as "FACTURA" | "PAGO")}>
+              <SelectTrigger id="tipo" className="h-9 sm:h-10 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="FACTURA">Factura (registrar deuda)</SelectItem>
+                <SelectItem value="PAGO">Pago (saldar)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Amount */}
           <div className="space-y-1.5 sm:space-y-2">
             <Label htmlFor="amount" className="text-xs sm:text-sm">Monto</Label>
@@ -128,8 +192,11 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
               <Input
                 id="amount"
                 type="number"
+                step="0.01"
                 placeholder="0.00"
                 className="pl-7 h-9 sm:h-10 text-sm"
+                value={monto}
+                onChange={(e) => setMonto(e.target.value)}
                 required
               />
             </div>
@@ -139,14 +206,14 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <div className="space-y-1.5 sm:space-y-2">
               <Label htmlFor="category" className="text-xs sm:text-sm">Categoria</Label>
-              <Select>
+              <Select value={categoriaSlug} onValueChange={setCategoriaSlug}>
                 <SelectTrigger id="category" className="h-9 sm:h-10 text-sm">
                   <SelectValue placeholder="Seleccionar" />
                 </SelectTrigger>
                 <SelectContent>
                   {categories.map((cat) => (
-                    <SelectItem key={cat} value={cat.toLowerCase()}>
-                      {cat}
+                    <SelectItem key={cat.id} value={cat.slug}>
+                      {cat.nombre}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -154,14 +221,14 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
             </div>
             <div className="space-y-1.5 sm:space-y-2">
               <Label htmlFor="method" className="text-xs sm:text-sm">Metodo de pago</Label>
-              <Select>
+              <Select value={metodoSlug} onValueChange={setMetodoSlug}>
                 <SelectTrigger id="method" className="h-9 sm:h-10 text-sm">
                   <SelectValue placeholder="Seleccionar" />
                 </SelectTrigger>
                 <SelectContent>
                   {paymentMethods.map((method) => (
-                    <SelectItem key={method} value={method.toLowerCase().replace(/ /g, "_")}>
-                      {method}
+                    <SelectItem key={method.id} value={method.slug}>
+                      {method.nombre}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -172,7 +239,7 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
           {/* Date */}
           <div className="space-y-1.5 sm:space-y-2">
             <Label htmlFor="date" className="text-xs sm:text-sm">Fecha de operacion</Label>
-            <Input id="date" type="date" required className="h-9 sm:h-10 text-sm" />
+            <Input id="date" type="date" className="h-9 sm:h-10 text-sm" />
           </div>
 
           {/* Bank Account Details */}
@@ -302,8 +369,14 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
               placeholder="Observaciones, detalles del pago, etc."
               rows={3}
               className="text-sm resize-none"
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
             />
           </div>
+
+          {error && (
+            <p className="text-sm text-destructive text-center">{error}</p>
+          )}
 
           {/* Submit */}
           <div className="flex gap-2 sm:gap-3 pt-2">
@@ -312,10 +385,12 @@ export function NewTransactionForm({ open, onOpenChange, cuentas = [] }: NewTran
               variant="outline"
               className="flex-1 h-9 sm:h-10 text-sm"
               onClick={() => onOpenChange(false)}
+              disabled={submitting}
             >
               Cancelar
             </Button>
-            <Button type="submit" className="flex-1 h-9 sm:h-10 text-sm">
+            <Button type="submit" className="flex-1 h-9 sm:h-10 text-sm" disabled={submitting}>
+              {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               Guardar transaccion
             </Button>
           </div>

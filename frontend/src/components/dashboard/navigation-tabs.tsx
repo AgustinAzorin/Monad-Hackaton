@@ -46,7 +46,7 @@ export function NavigationTabs({ cuentas, transacciones, onRefresh }: Navigation
           <ClientsTab cuentas={cuentas} transacciones={transacciones} onRefresh={onRefresh} />
         </TabsContent>
         <TabsContent value="categories" className="m-0">
-          <CategoriesTab />
+          <CategoriesTab reloadKey={transacciones.length} />
         </TabsContent>
         <TabsContent value="notifications" className="m-0">
           <NotificationsTab transacciones={transacciones} cuentas={cuentas} />

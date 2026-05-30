@@ -9,9 +9,10 @@ import type { CuentaCorriente } from "@/types/cuenta"
 
 interface QuickActionsProps {
   cuentas?: CuentaCorriente[]
+  onRefresh?: () => void
 }
 
-export function QuickActions({ cuentas = [] }: QuickActionsProps) {
+export function QuickActions({ cuentas = [], onRefresh }: QuickActionsProps) {
   const [showTransactionForm, setShowTransactionForm] = useState(false)
   const [showAccountForm, setShowAccountForm] = useState(false)
 
@@ -39,10 +40,12 @@ export function QuickActions({ cuentas = [] }: QuickActionsProps) {
         open={showTransactionForm}
         onOpenChange={setShowTransactionForm}
         cuentas={cuentas}
+        onSaved={onRefresh}
       />
       <NewAccountForm
         open={showAccountForm}
         onOpenChange={setShowAccountForm}
+        onSaved={onRefresh}
       />
     </>
   )

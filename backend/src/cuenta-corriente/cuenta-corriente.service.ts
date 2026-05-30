@@ -278,6 +278,8 @@ export class CuentaCorrienteService {
         receptor_id: dto.receptor_id,
         url_factura: dto.url_factura ?? null,
         descripcion: dto.descripcion ?? null,
+        categoria_slug: dto.categoria_slug ?? null,
+        metodo_pago_slug: dto.metodo_pago_slug ?? null,
       })
       .select()
       .single();

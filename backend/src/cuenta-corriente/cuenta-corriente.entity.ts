@@ -29,6 +29,8 @@ export interface Transaccion {
   receptor_id: string;
   url_factura: string | null;
   descripcion: string | null;
+  categoria_slug: string | null;
+  metodo_pago_slug: string | null;
   mercado_pago_preference_id: string | null;
   mercado_pago_payment_id: string | null;
   created_at: string;

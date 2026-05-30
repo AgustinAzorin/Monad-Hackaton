@@ -123,7 +123,7 @@ export function Dashboard() {
             </section>
 
             <section>
-              <QuickActions cuentas={cuentas} />
+              <QuickActions cuentas={cuentas} onRefresh={fetchData} />
             </section>
 
             <section>

@@ -23,6 +23,14 @@ export class CreateTransaccionDto {
   @IsOptional()
   @IsString()
   descripcion?: string;
+
+  @IsOptional()
+  @IsString()
+  categoria_slug?: string;
+
+  @IsOptional()
+  @IsString()
+  metodo_pago_slug?: string;
 }
 
 export class ProcesarPagoMPDto {

@@ -6,6 +6,8 @@ import { GatewayModule } from './gateway/gateway.module';
 import { SupabaseModule } from './config/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { CuentaCorrienteModule } from './cuenta-corriente/cuenta-corriente.module';
+import { CatalogosModule } from './catalogos/catalogos.module';
+import { CuentasBancariasModule } from './cuentas-bancarias/cuentas-bancarias.module';
 import { FacturasModule } from './facturas/facturas.module';
 import { WebhookModule } from './webhook/webhook.module';
 
@@ -16,6 +18,8 @@ import { WebhookModule } from './webhook/webhook.module';
     SupabaseModule,
     AuthModule,
     CuentaCorrienteModule,
+    CatalogosModule,
+    CuentasBancariasModule,
     FacturasModule,
     WebhookModule,
   ],
