@@ -4,12 +4,14 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { GatewayModule } from './gateway/gateway.module';
 import { SupabaseModule } from './config/supabase.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     GatewayModule,
     SupabaseModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
